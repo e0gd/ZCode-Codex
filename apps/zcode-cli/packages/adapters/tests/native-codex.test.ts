@@ -66,6 +66,40 @@ function input(overrides: Partial<Parameters<NativeCodexExecutor["execute"]>[0]>
 }
 const activeParams = { threadId: "thread-1", turnId: "turn-1" };
 
+describe("native automatic subagent preference", () => {
+  it("defaults to explicit delegation and preserves configured developer instructions", async () => {
+    const rpc = server(); const { executor } = await fixture();
+    await executor.execute(input());
+    expect(mock.spawn.mock.calls[0][1]).toContain("features.multi_agent=true");
+    const settings = rpc.calls.find(call => call.method === "thread/start")!.params!;
+    expect(settings).not.toHaveProperty("developerInstructions");
+    const turn = rpc.calls.find(call => call.method === "turn/start")!.params!;
+    expect(turn.additionalContext).toEqual({"zcode-codex-subagents": {kind:"application",value:expect.stringContaining("Do not spawn subagents unless")}});
+    expect(settings).not.toHaveProperty("multiAgentMode");
+  });
+  it("refreshes on the same thread and applies on/off without changing user input or permissions", async () => {
+    const rpc = server(); const { options } = await fixture(); let enabled = true;
+    const resolveAutoSubagents = vi.fn(async () => enabled);
+    const executor = new NativeCodexExecutor({ ...options, resolveAutoSubagents });
+    await executor.execute(input()); enabled = false;
+    await executor.execute(input({ inputId: "second" }));
+    expect(resolveAutoSubagents).toHaveBeenCalledTimes(2);
+    const turns = rpc.calls.filter(call => call.method === "turn/start");
+    expect(JSON.stringify(turns[0]!.params!.additionalContext)).toContain("Proactively delegate");
+    expect(JSON.stringify(turns[1]!.params!.additionalContext)).toContain("Do not spawn subagents unless");
+    expect(rpc.calls.filter(call => call.method === "turn/start").map(call => call.params!.input)).toEqual([
+      [{type:"text",text:"hello",text_elements:[]}], [{type:"text",text:"hello",text_elements:[]}],
+    ]);
+    expect(rpc.calls.filter(call => call.method === "thread/start")).toHaveLength(1);
+  });
+  it("fails before dispatch when Host preference lookup fails", async () => {
+    server(); const { options } = await fixture();
+    const executor = new NativeCodexExecutor({ ...options, resolveAutoSubagents: async () => { throw Error("Host unavailable"); } });
+    await expect(executor.execute(input())).rejects.toThrow("Host unavailable");
+    expect(mock.spawn).not.toHaveBeenCalled();
+  });
+});
+
 describe("native question buttons", () => {
   const questions = [
     { id: "hosting", header: "Hosting", question: "Where to host?", isOther: true, isSecret: false, options: [{ label: "Existing site", description: "Keep the current URL" }, { label: "New server", description: "Deploy separately" }] },

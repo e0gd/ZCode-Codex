@@ -5124,6 +5124,13 @@ const enUS: Record<string, string> = {
   "settings.subagents.scope.workspace": "Workspace",
   "settings.subagents.scope.label": "Scope",
   "settings.subagents.filter.all": "All",
+  "settings.codex.collaboration": "Codex collaboration",
+  "settings.codex.autoSubagents": "Automatically delegate to subagents",
+  "settings.codex.autoSubagentsDescription":
+    "Allow Codex to delegate independent work when useful. When off, delegation requires an explicit user, project, or skill instruction.",
+  "settings.codex.autoSubagentsScope":
+    "Global default on this computer, for Codex only. Applies from the next turn, including Web/mobile sessions connected to this computer.",
+  "settings.codex.saveFailed": "Could not save. Please try again.",
   "settings.subagents.filter.enabled": "Enabled",
   "settings.subagents.filter.disabled": "Disabled",
   "settings.subagents.table.name": "Name",

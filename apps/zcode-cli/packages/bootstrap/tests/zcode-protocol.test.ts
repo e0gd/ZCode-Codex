@@ -3880,6 +3880,39 @@ describe("ZCodeProtocolAgentServer", () => {
     }
   });
 
+  it("refreshes native delegation preferences through the trusted Host for the existing session", async () => {
+    const createdAppOptions: ZCodeAppOptions[] = [];
+    const server = new ZCodeProtocolAgentServer({
+      createZCodeApp: options => {
+        createdAppOptions.push(options);
+        return createFakeApp(options);
+      },
+      cwd: workspace.workspacePath,
+    });
+    let enabled: boolean | undefined;
+    const requests = attachSessionRuntimePreferencesResponder(server, () => ({
+      executionEngine: "codex",
+      nativeSearchEnhancementsEnabled: true,
+      ...(enabled === undefined ? {} : { codexAutoSubagentsEnabled: enabled }),
+    }));
+    try {
+      await requestResult(server, { id: 1, method: zcodeProtocolMethods.sessionCreate, params: { workspace } });
+      const read = createdAppOptions[0]!.resolveCodexAutoSubagents!;
+      expect(await read()).toBe(false);
+      enabled = true;
+      expect(await read()).toBe(true);
+      enabled = false;
+      expect(await read()).toBe(false);
+      expect(requests.map(request => (request.params as { scope: string }).scope)).toEqual([
+        "runtime-materialization", "user-execution", "user-execution", "user-execution",
+      ]);
+      expect(new Set(requests.map(request => (request.params as { sessionId: string }).sessionId)).size).toBe(1);
+      expect(createdAppOptions).toHaveLength(1);
+    } finally {
+      await server.shutdown();
+    }
+  });
+
   // 远端 Host 同样持有子智能体快照：是否接入只看 Host 声明的能力，不按 workspace 身份排除远程。
   it.each([
     undefined,
@@ -8044,6 +8077,7 @@ function attachSessionRuntimePreferencesResponder(
   server: ZCodeProtocolAgentServer,
   resolvePreferences: (scope: "runtime-materialization" | "user-execution") => {
     executionEngine?: "zcode" | "codex";
+    codexAutoSubagentsEnabled?: boolean;
     nativeSearchEnhancementsEnabled: boolean;
     toolSearchMode?: "auto" | "local" | "off";
     memoryEnabled?: boolean;

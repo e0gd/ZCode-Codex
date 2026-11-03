@@ -8,7 +8,15 @@ import {
 /* eslint-disable max-lines -- 子智能体管理页集中维护作用域列表、表单和启用状态，避免状态分散 */
 import { useStartPlanRecommendation } from "@/hooks/useStartPlanRecommendation.js";
 import { hasExplicitModelChanged } from "@/lib/startPlanRecommendation.js";
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import { Bot, Check, Plus, Trash2 } from "lucide-react";
 import { completeNewModelSelection } from "@zcode/provider";
 import {
@@ -132,6 +140,7 @@ export interface SubagentFormInitialState {
 }
 
 interface SubagentsSectionProps {
+  codexSettings?: ReactNode;
   onManageModels?: () => void;
   workspacePath?: string | null;
   workspaceIdentity?: string;
@@ -1283,6 +1292,7 @@ function SubagentForm({
 }
 
 export function SubagentsSection({
+  codexSettings,
   onManageModels,
   workspacePath,
   workspaceIdentity,
@@ -1807,6 +1817,7 @@ export function SubagentsSection({
   const hasSearchResultEmpty = Boolean(query.trim()) && filteredAgentCount === 0;
   return (
     <div className="space-y-6">
+      {codexSettings}
       <div className="flex min-w-0 flex-wrap items-center gap-3">
         <div className="flex min-w-0 flex-wrap items-center gap-3">
           <PluginScopeMenu

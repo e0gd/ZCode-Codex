@@ -137,6 +137,8 @@ export type ZCodeAppRuntimeConfigInput = AgentRuntimeConfig;
 export interface ZCodeAppOptions {
   /** Host 派生的项目引擎；冻结于 app 创建。缺省仅供独立 CLI 兼容旧环境选项。 */
   executionEngine?: "zcode" | "codex";
+  /** Host 每轮读取；仅作用于原生 Codex，不改变普通子智能体定义。 */
+  resolveCodexAutoSubagents?: () => Promise<boolean>;
   /** 独立 CLI 的配置菜单编辑输入默认值；其他装配保留显式 Session 配置语义。 */
   modelSelectionMode?: "cli-default";
   /** Host 在运行实例创建时传入，运行中不刷新。 */

@@ -147,6 +147,21 @@ The native adapter converts resolved image data URLs to Codex `turn/start` image
 
 Regression evidence must cover text plus image and image-only turns, several images in order, uploaded artifact and local-image resolution, invalid/unsupported media rejection, persisted user file parts, and image delivery on the resumed native thread. Real runtime acceptance must inspect the Responses image payload through the official Codex binary with a local fixture; no paid inference is necessary.
 
+## Codex automatic subagent preference
+
+The Subagents settings page exposes a global Codex collaboration switch, `codexAutoSubagentsEnabled`, default false. Existing ZCode agent definitions are unchanged. This first implementation provides the global preference; project overrides are not implemented. Off means delegation only when the user or applicable project/skill instructions explicitly request it. On permits proactive delegation for useful independent work, without requiring a child for every turn. This is a behavioral policy, not a permission grant or a hard ban on explicit delegation.
+
+The existing setting service on the executing Host owns the persisted Boolean. UI uses that service's normal update path. Before each native execution, bootstrap requests current Host runtime preferences and snapshots the Boolean for that execution. Desktop and official Web/mobile inputs use that same runtime, so changing the desktop switch affects the next native turn in either client. The official hosted frontend cannot gain the new control from a desktop update. Missing values from older Hosts mean false. Preference lookup failures must fail visibly rather than reuse stale enabled state. An in-flight execution, including async question continuations, retains its original snapshot.
+
+```text
+Settings switch -> executing Host setting service (single persisted owner)
+  -> next native execute -> session/requestRuntimePreferences (user-execution)
+  -> adapter snapshot -> official Codex process + per-turn application context
+desktop-continuous / web-remote-replayable -> same admitted runtime and preference
+```
+
+The adapter explicitly enables the supported `features.multi_agent` capability in its isolated child. Each `turn/start` supplies the selected policy through application `additionalContext`, keyed by `zcode-codex-subagents`. This preserves configured developer instructions and updates existing threads: Codex 0.166.0 did not refresh the model-visible developer instructions when only `thread/resume.developerInstructions` changed. It does not use deprecated `multiAgentMode`, change reasoning/model/sandbox selection, rewrite Codex home configuration, or alter the user's message. Existing thread ownership, cancellation and no-replay receipts remain authoritative. Regression evidence must cover false-by-default, on/off changes on the same thread, next-execution refresh, instruction preservation, protocol default compatibility, and browser switch persistence/error behavior at mobile and desktop widths.
+
 ## Native user questions
 
 Codex `item/tool/requestUserInput` and completed `agentMessage.questions` must project into the existing AskUserQuestion interaction, including clickable options and free-text answers. Plain text is not a substitute for a structured question. Core owns the pending tool, broker registration, PermissionRequested/Resolved events, persistence and continuous/replayable projections. Adapter code only translates native question/answer identities; it cannot infer a choice, auto-approve in full-access mode, or fall back to the ZCode model loop.

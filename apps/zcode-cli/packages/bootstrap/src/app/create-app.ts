@@ -858,7 +858,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     runtime = new AgentRuntime(sessionId, runtimeConfig, {
       // 项目引擎由 Host 冻结；显式 ZCode 不得被进程级实验变量切换。
       nativeTurnExecutor: options.executionEngine === "codex"
-        ? await createNativeCodexExecutor({ workspacePath: workingDirectory, env: options.env ?? process.env, resolveModel: providerModelRuntime.resolveNativeCodexModel })
+        ? await createNativeCodexExecutor({ workspacePath: workingDirectory, env: options.env ?? process.env, resolveModel: providerModelRuntime.resolveNativeCodexModel, resolveAutoSubagents: options.resolveCodexAutoSubagents })
         : options.executionEngine === "zcode"
           ? undefined
           : createNativeCodexExecutorFromEnv(workingDirectory, options.env ?? process.env, providerModelRuntime.resolveNativeCodexModel),

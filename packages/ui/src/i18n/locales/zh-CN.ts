@@ -4780,6 +4780,13 @@ const zhCN: Record<string, string> = {
   "settings.subagents.scope.workspace": "工作区",
   "settings.subagents.scope.label": "作用域",
   "settings.subagents.filter.all": "全部",
+  "settings.codex.collaboration": "Codex 协作",
+  "settings.codex.autoSubagents": "自动派生子 Agent",
+  "settings.codex.autoSubagentsDescription":
+    "开启后，Codex 可按需将独立工作交给子 Agent 并行处理；关闭后，仅在你或项目／技能指令明确要求时派生。",
+  "settings.codex.autoSubagentsScope":
+    "此电脑的全局默认设置，仅影响 Codex。下一轮对话生效，连接此电脑的网页／手机会话同样适用。",
+  "settings.codex.saveFailed": "保存失败，请重试。",
   "settings.subagents.filter.enabled": "已启用",
   "settings.subagents.filter.disabled": "已停用",
   "settings.subagents.table.name": "名称",

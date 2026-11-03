@@ -52,6 +52,66 @@ export { createSettingsPageConfig, resolveSettingsSectionForPlatform };
 export { SETTINGS_SECTION_GROUPS, SETTINGS_SECTIONS };
 export { isSettingsSectionAvailable };
 
+export function CodexSubagentsSettings({
+  enabled,
+  loading = false,
+  onChange,
+}: {
+  enabled: boolean;
+  loading?: boolean;
+  onChange: (enabled: boolean) => Promise<void>;
+}) {
+  const { intl } = useZCodeIntl();
+  const [saving, setSaving] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const change = async (next: boolean) => {
+    setSaving(true);
+    setFailed(false);
+    try {
+      await onChange(next);
+    } catch {
+      setFailed(true);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <section
+      className="space-y-2"
+      aria-label={intl.formatMessage({ id: "settings.codex.collaboration" })}
+    >
+      <h3 className="text-ui-base font-medium text-foreground">
+        {intl.formatMessage({ id: "settings.codex.collaboration" })}
+      </h3>
+      <SettingsGroupCard>
+        <SettingsRow
+          controlLayout="wide"
+          label={intl.formatMessage({ id: "settings.codex.autoSubagents" })}
+          description={intl.formatMessage({ id: "settings.codex.autoSubagentsDescription" })}
+          control={
+            <Switch
+              // Radix 用 data-state 标记选中态；显式显示开启颜色与滑块位置。
+              className="data-[state=checked]:bg-primary [&[data-state=checked]_[data-slot=switch-thumb]]:translate-x-[calc(100%-2px)]"
+              checked={enabled}
+              disabled={loading || saving}
+              onCheckedChange={change}
+              aria-label={intl.formatMessage({ id: "settings.codex.autoSubagents" })}
+            />
+          }
+        />
+      </SettingsGroupCard>
+      <p className="text-ui-sm text-foreground-subtle">
+        {intl.formatMessage({ id: "settings.codex.autoSubagentsScope" })}
+      </p>
+      {failed ? (
+        <p role="alert" className="text-ui-sm text-foreground">
+          {intl.formatMessage({ id: "settings.codex.saveFailed" })}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 const TASK_AUTO_ARCHIVE_DAY_OPTIONS = [3, 7, 14, 30] as const;
 const ZCODE_INTERACTION_BEHAVIOR_OPTIONS: readonly ZCodeInteractionBehavior[] = ["queue", "guide"];
 

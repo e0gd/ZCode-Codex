@@ -360,6 +360,8 @@ export interface AppSettings {
   toolSearchMode?: AppToolSearchMode;
   /** 新建或冷恢复 Session 是否启用 Memory；默认关闭。 */
   memoryEnabled?: boolean;
+  /** Codex 可按需主动派生子 Agent；默认关闭，下一轮执行读取。 */
+  codexAutoSubagentsEnabled?: boolean;
   onboardingOccupation?:
     | "office"
     | "developer"

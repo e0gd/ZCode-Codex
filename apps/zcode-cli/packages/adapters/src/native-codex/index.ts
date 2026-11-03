@@ -17,6 +17,7 @@ export interface NativeCodexOptions {
   stateDirectory?: string;
   model?: string;
   resolveModel?: NativeCodexModelResolver;
+  resolveAutoSubagents?: () => Promise<boolean>;
   provider?: string;
   baseUrl?: string;
   skillRoots?: string[];
@@ -144,6 +145,8 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
   async execute(input: ExecuteInput): ReturnType<NativeTurnExecutor["execute"]> {
     input.signal.throwIfAborted();
     const userInput = nativeUserInput(input);
+    const autoSubagents = (await this.options.resolveAutoSubagents?.()) === true;
+    input.signal.throwIfAborted();
     input = { ...input, permission: { ...input.permission } };
     const configOverrides = validateMcpOverrides(this.options.configOverrides ?? []);
     const resolvedModel = input.modelSelection
@@ -172,11 +175,11 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       }
       throw error;
     }
-    try { return await this.run(input, workspace, directory, configOverrides, resolvedModel, userInput); }
+    try { return await this.run(input, workspace, directory, configOverrides, resolvedModel, userInput, autoSubagents); }
     finally { await rm(lock, { recursive: true, force: true }); }
   }
 
-  private async run(input: ExecuteInput, workspace: string, directory: string, configOverrides: string[], resolvedModel: NativeCodexModelConfig | undefined, userInput: Array<Record<string, unknown>>): ReturnType<NativeTurnExecutor["execute"]> {
+  private async run(input: ExecuteInput, workspace: string, directory: string, configOverrides: string[], resolvedModel: NativeCodexModelConfig | undefined, userInput: Array<Record<string, unknown>>, autoSubagents: boolean): ReturnType<NativeTurnExecutor["execute"]> {
     let connection: CodexConnection | undefined;
     const permission = nativePermission(input.permission);
     let threadId = "";
@@ -383,7 +386,7 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       connection = new CodexConnection({
         binaryPath: this.options.binaryPath,
         // Codex 默认模式会在进程内拒绝 request_user_input；桥接实现后须显式开放该能力。
-        args: ["app-server", "--stdio", "-c", "features.default_mode_request_user_input=true", "-c", `model=${JSON.stringify(model)}`, "-c", `model_provider=${JSON.stringify(activeProvider)}`,
+        args: ["app-server", "--stdio", "-c", "features.default_mode_request_user_input=true", "-c", "features.multi_agent=true", "-c", `model=${JSON.stringify(model)}`, "-c", `model_provider=${JSON.stringify(activeProvider)}`,
           ...[...new Set([...providerAliases, activeProvider])].flatMap(alias => [
             ...(baseUrl ? ["-c", `model_providers.${alias}.base_url=${JSON.stringify(baseUrl)}`] : []),
             ...(resolvedModel ? ["-c", `model_providers.${alias}.name="ZCode selected provider"`, "-c", `model_providers.${alias}.wire_api="responses"`, "-c", `model_providers.${alias}.requires_openai_auth=false`, "-c", `model_providers.${alias}.supports_websockets=false`] : []),
@@ -407,6 +410,11 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       return connection;
       };
       connection = await connect(provider);
+      const delegationPolicy = autoSubagents
+        ? "Proactively delegate useful independent work to subagents when it improves the task. Keep simple work in the main agent. Delegation does not broaden permissions or override explicit user/project constraints."
+        : "Do not spawn subagents unless the user or applicable AGENTS.md/skill instructions explicitly request subagents, delegation, or parallel agent work. Handle other work in the main agent.";
+      // 0.166.0 恢复线程时不会更新模型已见的开发指令；按轮应用上下文才能让旧会话立即读取新偏好。
+      const additionalContext = { "zcode-codex-subagents": { kind: "application", value: `<zcode_subagent_policy>\n${delegationPolicy}\n</zcode_subagent_policy>` } };
       const settings = { cwd: workspace, model, modelProvider: provider, sandbox: permission.sandbox, approvalPolicy: permission.approvalPolicy,
         ...(resolvedModel ? { config: { model_reasoning_effort: effort ?? null } } : {}) };
 
@@ -447,7 +455,7 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       const startTurn = async (items: Array<Record<string, unknown>>) => {
         input.signal.throwIfAborted();
         starting = true;
-        const started = record(await connection!.request("turn/start", { threadId, model, ...(resolvedModel ? { effort: effort ?? null } : {}), approvalPolicy: permission.approvalPolicy, sandboxPolicy: permission.sandboxPolicy, input: items }));
+        const started = record(await connection!.request("turn/start", { threadId, model, ...(resolvedModel ? { effort: effort ?? null } : {}), approvalPolicy: permission.approvalPolicy, sandboxPolicy: permission.sandboxPolicy, additionalContext, input: items }));
         turnId = identifier(record(started.turn).id);
         starting = false;
         for (const message of buffered.splice(0)) enqueue(message);
@@ -556,6 +564,7 @@ export interface NativeCodexProjectOptions {
   env?: NodeJS.ProcessEnv;
   binaryPath?: string;
   codexHome?: string;
+  resolveAutoSubagents?: () => Promise<boolean>;
   resolveModel?: NativeCodexModelResolver;
 }
 
@@ -582,6 +591,7 @@ export async function createNativeCodexExecutor(options: NativeCodexProjectOptio
     binaryPath,
     codexHome: canonicalHome,
     ...(options.resolveModel ? { resolveModel: options.resolveModel } : {}),
+    ...(options.resolveAutoSubagents ? { resolveAutoSubagents: options.resolveAutoSubagents } : {}),
     ...nativeCodexEnvironmentOptions(env),
     env: { ...env },
   });

@@ -55,6 +55,10 @@ The partial clone's architecture checks used Git rename detection disabled to av
 
 An initial test invocation incorrectly split a single path into character filters and ran the entire adapters suite. That run reported 2,478 passed, 27 failed, and 67 skipped. The corrected commands selected only the four affected test files and passed all 217 cases. A subsequent upstream/branch comparison found identical results for the original 27 cases: 22 failed and 5 passed in each checkout, with no branch-only reproduction. The five passing cases remain classified as unreproduced, not fixed. See [the baseline investigation and desktop acceptance report](docs/testing/native-codex-validation.md); these results do not establish live-provider or phone acceptance.
 
+## Codex delegation preference
+
+Settings → Agent capabilities → Subagents contains a Codex collaboration switch, **Automatically delegate to subagents**. It defaults off: delegation then requires an explicit user, project, or skill instruction. Enabling it permits useful independent work to be delegated proactively. The setting is global to the executing computer and is read again on the next turn, including existing Web/mobile sessions connected to that computer. It does not change the selected model, reasoning level, sandbox or ZCode agent definitions. The official hosted Web frontend does not acquire the new settings control from a desktop update.
+
 ## Upstream maintenance
 
 `origin` is the fork, and `upstream` is `https://github.com/zai-org/ZCode.git`. Keep the fork's `main` aligned with upstream and develop the integration on `native-codex`. Merge upstream updates into the feature branch only after reviewing compatibility and rerunning the required checks.

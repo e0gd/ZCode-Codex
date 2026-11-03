@@ -3503,6 +3503,11 @@ async function createRecord(
   let ownSessionRecord: ZCodeProtocolSessionRecord | undefined;
   const app = await createWorkspaceZCodeApp(context, workspace, {
     executionEngine: startupPreferences.executionEngine,
+    resolveCodexAutoSubagents: async () => {
+      // 每轮从执行 Host 读取，桌面与手机共享既有 runtime 时也不会沿用过期的开启状态。
+      const preferences = await requestSessionRuntimePreferences(context, sessionId, "user-execution", undefined, undefined, workspace);
+      return preferences.codexAutoSubagentsEnabled === true;
+    },
     env: context.deps.env,
     eventStore,
     resume,

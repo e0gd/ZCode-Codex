@@ -83,6 +83,7 @@ import {
 } from "@/settings/usage-stats/CodingPlanUsagePanel.js";
 import { buildPersonalCodingPlanUsageSource } from "@/lib/codingPlanUsageSources.js";
 import { SubagentsSection } from "@/settings/SubagentsSection.js";
+import { CodexSubagentsSettings } from "@/settingsPageHelpers.js";
 import { AutomationsSection } from "@/settings/AutomationsSection.js";
 import { SegmentPill } from "@/settings/PluginStoreListView.js";
 import { PluginsSection } from "@/settings/PluginsSection.js";
@@ -2193,6 +2194,17 @@ export function SettingsPage({
                             />
                           ) : activeSection === "subagents" ? (
                             <SubagentsSection
+                              codexSettings={
+                                <CodexSubagentsSettings
+                                  enabled={sharedSettings?.codexAutoSubagentsEnabled === true}
+                                  loading={!sharedSettings}
+                                  onChange={async (enabled) => {
+                                    await updateSharedSettings({
+                                      codexAutoSubagentsEnabled: enabled,
+                                    });
+                                  }}
+                                />
+                              }
                               onManageModels={handleOpenModelProviderSettings}
                               workspacePath={activeWorkspacePath}
                               workspaceIdentity={activeWorkspaceIdentity}
