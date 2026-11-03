@@ -15,11 +15,16 @@ ZCode-Codex integrates Codex into the [ZCode](https://github.com/zai-org/ZCode) 
 
 The development branch is `native-codex`; `main` preserves the upstream baseline. New projects default to ZCode; choosing Codex at creation fixes that project's sessions to Codex. Existing projects default to ZCode. Codex uses the provider and model configured in ZCode, currently OpenAI Responses with an API key, without per-project environment variables.
 
-- Codex text and image inputs use the existing chat and attachment paths.
-- Structured questions display choices or a free-text field and wait for an explicit answer.
-- Native child agents appear in the existing status rows, composer robot button, background list and read-only child-session view.
-- Settings → Agent capabilities → Subagents controls automatic Codex delegation, off by default. Connected Web sessions use the saved setting on the next turn.
-- Desktop and connected Web/mobile clients share the executing desktop's sessions. Updating the desktop does not replace the official hosted frontend or add its new controls.
+## Project strengths
+
+Codex integrates with ZCode's existing projects, sessions and interactions, so users can keep working in the familiar workspace:
+
+- **Choose ZCode or Codex per project**: New projects default to ZCode, with Codex available at creation. Both project types coexist in one client. The execution method is fixed after creation; existing projects keep using ZCode.
+- **Configure APIs in ZCode**: Codex uses the provider, model and reasoning level configured in ZCode, without separate Codex configuration for every project. Currently this requires an OpenAI Responses-compatible API key configuration; ChatGPT subscription login is not integrated.
+- **Continue the same session on desktop and Web/mobile**: Create a Codex project in the modified desktop, then continue from the official Web/mobile frontend connected to that desktop. New tasks inside that project also use Codex. The official frontend cannot currently create Codex projects or change this fork's new settings; see [Web/mobile limitations](#official-webmobile-limitations).
+- **Follow subagent progress**: Codex child agents use the existing status rows, composer robot button, background list and read-only child-session view. The desktop provides an automatic-delegation switch, off by default; saved changes apply on the next turn to both desktop and connected Web/mobile sessions. It controls delegation policy, not concurrency; see [subagent collaboration](#enable-parallel-codex-subagents).
+- **Use familiar input and confirmation flows**: Text, images, tool approvals and structured questions appear through ZCode's existing interface. Choice questions show buttons; free-text questions show an input field and wait for an explicit answer.
+- **Keep Codex configuration separate**: ZCode locates and starts the separately installed official Codex CLI when needed, using isolated data and configuration without overwriting the user's existing Codex configuration or credentials.
 
 See [usage and limitations](NATIVE_CODEX.md) and [validation evidence](docs/testing/native-codex-validation.md). This community fork is maintained separately from upstream ZCode and official OpenAI releases.
 
