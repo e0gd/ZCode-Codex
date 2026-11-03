@@ -8,8 +8,10 @@ import type {
   PermissionBrokerResult,
   PermissionRequestedPayload,
   PermissionResolvedPayload,
+  NativeTurnApproval,
 } from "@zcode/contracts";
 import type { AgentRuntimeInternal } from "../internal.js";
+import { ASK_USER_QUESTION_TOOL_NAME, NativeAskUserQuestionInputSchema } from "@zcode/contracts";
 import { linkAbortSignal } from "../../tool/executor/timeout.js";
 
 const NATIVE_APPROVAL_RULE_ID = "native-codex";
@@ -154,6 +156,90 @@ export async function executeNativeTurn(
     input.traceContext,
     modelIdentity as Model | undefined,
   );
+  const requestInteraction = async (request: NativeTurnApproval, signal: AbortSignal): Promise<PermissionBrokerResult> => {
+    signal.throwIfAborted();
+    const tool = tools.get(request.toolCallId);
+    if (!tool || tool.completed) {
+      throw new Error(`Native approval has no pending tool: ${request.toolCallId}`);
+    }
+    const requestId = `${NATIVE_APPROVAL_RULE_ID}:${input.inputId}:${request.id}`;
+    const payload: PermissionRequestedPayload = {
+      requestId,
+      // JSON-RPC id 只关联 broker；审批卡必须关联已持久化的 Codex item。
+      toolCallId: request.toolCallId as ToolCallId,
+      toolName: request.name,
+      input: request.input,
+      reason: request.reason ?? NATIVE_APPROVAL_REASON,
+      riskLevel: request.name === ASK_USER_QUESTION_TOOL_NAME ? "low" : "high",
+      approvalMode: "user-once",
+      optionsPolicy: "no-always-allow",
+      suggestedPermissionUpdates: [],
+    };
+    const controller = new AbortController();
+    const unlink = linkAbortSignal(signal, controller);
+    const cancellation = Promise.withResolvers<never>();
+    const onAbort = () => cancellation.reject(controller.signal.reason);
+    controller.signal.addEventListener("abort", onAbort, { once: true });
+    let published = false;
+    let resolved: PermissionBrokerResult = { decision: "deny" };
+    try {
+      // 先登记再发布（异步 broker 等 registered），否则同步 UI 应答会找不到待审批项。
+      const response = this.permissionBroker.requestPermission(
+        {
+          ...payload,
+          requestId,
+          sessionId: this.sessionId,
+          turnId: input.traceContext.turnId,
+          traceId: input.traceContext.traceId,
+          mode: permission.mode,
+          ruleId: NATIVE_APPROVAL_RULE_ID,
+          requestedAt: new Date(),
+        },
+        { signal: controller.signal },
+      );
+      const publish = async () => {
+        if (response.registered) await response.registered;
+        // 登记可能晚于取消/失败；不能重新发布已失效的审批。
+        controller.signal.throwIfAborted();
+        published = true;
+        await emit(SessionEventType.PermissionRequested, payload);
+      };
+      // 与常规工具一样并行等待发布和应答；broker 登记失败或取消不被慢登记阻塞。
+      const [, decision] = await Promise.race([
+        Promise.all([publish(), response]),
+        cancellation.promise,
+      ]);
+      signal.throwIfAborted();
+      resolved = decision;
+      // Codex 请求是用户一次性审批；不能沿用自动批准或把 modify/escalate 当作 allow。
+      return decision;
+    } catch (error) {
+      resolved = {
+        decision: "deny",
+        reason: signal.aborted
+          ? "Native approval cancelled"
+          : error instanceof Error
+            ? error.message
+            : "Native approval failed",
+      };
+      throw error;
+    } finally {
+      controller.signal.removeEventListener("abort", onAbort);
+      // 发布失败也必须撤销 broker 等待；不能留下重连后仍可应答的孤儿请求。
+      controller.abort();
+      unlink();
+      if (published) {
+        const resolution: PermissionResolvedPayload = {
+          requestId,
+          toolCallId: payload.toolCallId,
+          decision: resolved.decision,
+          reason: resolved.reason,
+          modifiedInput: resolved.modifiedInput,
+        };
+        await emit(SessionEventType.PermissionResolved, resolution);
+      }
+    }
+  };
   try {
     const result = await executor.execute({
       sessionId: this.sessionId,
@@ -256,89 +342,23 @@ export async function executeNativeTurn(
       requestApproval: async (request) => {
         input.signal.throwIfAborted();
         const tool = tools.get(request.toolCallId);
-        if (!tool || tool.completed) {
-          throw new Error(`Native approval has no pending tool: ${request.toolCallId}`);
-        }
+        if (!tool || tool.completed) throw new Error(`Native approval has no pending tool: ${request.toolCallId}`);
         if (permission.planEnabled || permission.mode === "plan") return "deny";
-        if (permission.mode === "yolo" && (request.name === "Bash" || request.name === "Edit"))
-          return "allow";
-        const requestId = `${NATIVE_APPROVAL_RULE_ID}:${input.inputId}:${request.id}`;
-        const payload: PermissionRequestedPayload = {
-          requestId,
-          // JSON-RPC id 只关联 broker；审批卡必须关联已持久化的 Codex item。
-          toolCallId: request.toolCallId as ToolCallId,
-          toolName: request.name,
-          input: request.input,
-          reason: request.reason ?? NATIVE_APPROVAL_REASON,
-          riskLevel: "high",
-          approvalMode: "user-once",
-          optionsPolicy: "no-always-allow",
-          suggestedPermissionUpdates: [],
-        };
-        const controller = new AbortController();
-        const unlink = linkAbortSignal(input.signal, controller);
-        const cancellation = Promise.withResolvers<never>();
-        const onAbort = () => cancellation.reject(controller.signal.reason);
-        controller.signal.addEventListener("abort", onAbort, { once: true });
-        let published = false;
-        let resolved: PermissionBrokerResult = { decision: "deny" };
-        try {
-          // 先登记再发布（异步 broker 等 registered），否则同步 UI 应答会找不到待审批项。
-          const response = this.permissionBroker.requestPermission(
-            {
-              ...payload,
-              requestId,
-              sessionId: this.sessionId,
-              turnId: input.traceContext.turnId,
-              traceId: input.traceContext.traceId,
-              mode: permission.mode,
-              ruleId: NATIVE_APPROVAL_RULE_ID,
-              requestedAt: new Date(),
-            },
-            { signal: controller.signal },
-          );
-          const publish = async () => {
-            if (response.registered) await response.registered;
-            // 登记可能晚于取消/失败；不能重新发布已失效的审批。
-            controller.signal.throwIfAborted();
-            published = true;
-            await emit(SessionEventType.PermissionRequested, payload);
-          };
-          // 与常规工具一样并行等待发布和应答；broker 登记失败或取消不被慢登记阻塞。
-          const [, decision] = await Promise.race([
-            Promise.all([publish(), response]),
-            cancellation.promise,
-          ]);
-          input.signal.throwIfAborted();
-          resolved = decision;
-          // Codex 请求是用户一次性审批；不能沿用自动批准或把 modify/escalate 当作 allow。
-          return decision.decision === "allow" ? "allow" : "deny";
-        } catch (error) {
-          resolved = {
-            decision: "deny",
-            reason: input.signal.aborted
-              ? "Native approval cancelled"
-              : error instanceof Error
-                ? error.message
-                : "Native approval failed",
-          };
-          throw error;
-        } finally {
-          controller.signal.removeEventListener("abort", onAbort);
-          // 发布失败也必须撤销 broker 等待；不能留下重连后仍可应答的孤儿请求。
-          controller.abort();
-          unlink();
-          if (published) {
-            const resolution: PermissionResolvedPayload = {
-              requestId,
-              toolCallId: payload.toolCallId,
-              decision: resolved.decision,
-              reason: resolved.reason,
-              modifiedInput: resolved.modifiedInput,
-            };
-            await emit(SessionEventType.PermissionResolved, resolution);
-          }
-        }
+        if (permission.mode === "yolo" && (request.name === "Bash" || request.name === "Edit")) return "allow";
+        const decision = await requestInteraction(request, input.signal);
+        return decision.decision === "allow" ? "allow" : "deny";
+      },
+      requestUserInput: async (request, options) => {
+        // 提问不是命令审批；Plan/Full access 都要走用户应答，不能自动跳过或批准。
+        const questionInput = NativeAskUserQuestionInputSchema.parse({ questions: request.questions, metadata: { source: "native-codex" } });
+        const tool = tools.get(request.toolCallId);
+        if (tool?.name !== ASK_USER_QUESTION_TOOL_NAME || JSON.stringify(NativeAskUserQuestionInputSchema.parse(tool.input)) !== JSON.stringify(questionInput)) throw new Error("Native question has no matching pending tool");
+        const decision = await requestInteraction({ id: request.id, toolCallId: request.toolCallId, name: ASK_USER_QUESTION_TOOL_NAME, input: questionInput, reason: "Codex needs your answer" }, options.signal);
+        if (decision.decision === "deny") return {};
+        if (decision.decision !== "modify") throw new Error("Native question response has no user answers");
+        const answered = NativeAskUserQuestionInputSchema.parse(decision.modifiedInput);
+        if (JSON.stringify(answered.questions) !== JSON.stringify(questionInput.questions) || answered.answers === undefined) throw new Error("Native question response does not match the pending questions");
+        return answered.answers;
       },
     });
     await compactDelivery;

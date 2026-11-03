@@ -5,6 +5,7 @@ import {
   CoreErrorType,
   createCoreError,
   AskUserQuestionInputSchema,
+  NativeAskUserQuestionInputSchema,
   AMEND_WORKFLOW_TOOL_NAME,
   CREATE_WORKFLOW_TOOL_NAME,
   EXIT_PLAN_MODE_TOOL_NAME,
@@ -344,7 +345,8 @@ async function requestUserInput(
   request: PermissionBrokerRequest,
   options?: RegisteredRequestOptions,
 ): Promise<PermissionBrokerResult> {
-  const parsed = AskUserQuestionInputSchema.safeParse(request.input);
+  const native = isRecord(request.input) && isRecord(request.input.metadata) && request.input.metadata.source === "native-codex";
+  const parsed = (native ? NativeAskUserQuestionInputSchema : AskUserQuestionInputSchema).safeParse(request.input);
   if (!parsed.success) {
     return {
       decision: "deny",
@@ -355,7 +357,7 @@ async function requestUserInput(
     };
   }
 
-  const initialAutoResolution = await readPersistedAutoResolution(context, request);
+  const initialAutoResolution = native ? undefined : await readPersistedAutoResolution(context, request);
 
   const response = await raceClientRequestWithV4Interaction(
     context,
@@ -385,7 +387,8 @@ async function requestUserInput(
     (answer) => v4AnswerToUserInputResponse(answer),
     createInteractionRegistrationOptions(
       request,
-      "askUserQuestion",
+      // 原生问题必须等明确回答；普通 AskUserQuestion 的自动继续不能代替用户选择。
+      native ? "other" : "askUserQuestion",
       context,
       initialAutoResolution,
     ),

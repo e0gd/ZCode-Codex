@@ -97,7 +97,7 @@ A published request has exactly one resolved event, including denial, cancellati
 
 Core failure diagnostics emit `native_codex.turn.failed` with session/input/trace/turn identity, captured mode/Plan and safe error metadata. Unsupported interactions and final-text mismatches carry stable `NATIVE_CODEX_UNSUPPORTED_INTERACTION` / `NATIVE_CODEX_FINAL_TEXT_MISMATCH` codes and fixed human messages; unknown causes use a fixed generic diagnostic while preserving the original thrown error. Never log raw provider error messages, prompts, commands, keys, or tool outputs. These diagnostics distinguish known failure categories without claiming to fix unknown runtime stops.
 
-Initial acceptance covers exact-workspace isolation, no ZCode modelFactory calls, thread reuse, explicit denial, cancellation, event order, cold tool/text persistence, no fallback after errors and consistent live/replay output. Attachments and unsupported interactions are explicitly unsupported. Native guide input is not consumed by a ZCode loop. Session forks, rewind and project-memory/model side jobs require separate native capability integration before being represented as supported.
+Initial acceptance covers exact-workspace isolation, no ZCode modelFactory calls, thread reuse, explicit denial, cancellation, event order, cold tool/text persistence, no fallback after errors and consistent live/replay output. Images and structured user questions are supported as specified below; other unsupported media and interactions fail explicitly. Native guide input is not consumed by a ZCode loop. Session forks, rewind and project-memory/model side jobs require separate native capability integration before being represented as supported.
 
 ## Native automatic-compaction notifications (2026-11-02)
 
@@ -146,6 +146,25 @@ Desktop and Web/mobile submissions share the existing CommandInbox admission and
 The native adapter converts resolved image data URLs to Codex `turn/start` image inputs (`type: "image", url: dataUrl`). Text attachments and resource links become explicit text inputs; unsupported file/video media and failed image resolution fail explicitly before spawning Codex or changing a thread. Images never enter logs or get replaced with filename-only placeholders. Existing thread mapping, permission snapshot, cancellation, and continuous versus replayable event delivery stay unchanged. A restored session resumes its original Codex thread, which owns prior multimodal context.
 
 Regression evidence must cover text plus image and image-only turns, several images in order, uploaded artifact and local-image resolution, invalid/unsupported media rejection, persisted user file parts, and image delivery on the resumed native thread. Real runtime acceptance must inspect the Responses image payload through the official Codex binary with a local fixture; no paid inference is necessary.
+
+## Native user questions
+
+Codex `item/tool/requestUserInput` and completed `agentMessage.questions` must project into the existing AskUserQuestion interaction, including clickable options and free-text answers. Plain text is not a substitute for a structured question. Core owns the pending tool, broker registration, PermissionRequested/Resolved events, persistence and continuous/replayable projections. Adapter code only translates native question/answer identities; it cannot infer a choice, auto-approve in full-access mode, or fall back to the ZCode model loop.
+
+Native questions use validated `metadata.source=native-codex` inputs. They may have no options (free text), one or more choices, and multiple distinct questions. Existing ordinary AskUserQuestion limits remain unchanged. Secret questions are explicitly rejected until the UI supports secret entry. Native questions do not use the ordinary optional-question automatic-continue timer. Cancel/decline supplies no invented answers; turn cancellation or connection failure settles and removes pending interactions. Invalid/stale identities and malformed answer payloads fail explicitly.
+
+The isolated Codex child enables `features.default_mode_request_user_input=true`; without this opt-in Codex 0.166.0 advertises the tool but rejects it internally in Default mode before a client can render a question. This changes question availability only; mode, sandbox and approval snapshots stay unchanged.
+
+```text
+Codex structured question -> adapter normalization -> Core persisted AskUserQuestion tool
+  -> broker registered -> PermissionRequested -> existing desktop / mobile question buttons
+  -> first valid response -> PermissionResolved -> persisted tool answer
+  -> matching native RPC response, or same-thread continuation after an async question turn
+```
+
+For completed async question messages without a server RPC, the current native turn is allowed to finish, then the explicit user answers start a continuation on the same Codex thread within the admitted Core turn. An unanswered question holds the Core turn; selecting the default is not submission. Declining leaves no continuation input. Native item notifications and repeated completions cannot duplicate a card or dispatch its answer twice. Disconnection must cancel the broker wait even while the adapter is awaiting user input.
+
+Regression evidence includes option and custom-text submission, multiple question ID mapping, no-option questions, full-access and Plan questions, decline, cancellation, process failure, no response before user action, duplicate/stale native messages, same-thread async continuation, live and replayed interaction state, and actual browser clicks through the existing question UI.
 
 ## Validation
 

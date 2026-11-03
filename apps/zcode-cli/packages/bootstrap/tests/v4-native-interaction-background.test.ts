@@ -864,6 +864,22 @@ function permissionRequest(overrides: Record<string, unknown> = {}) {
 }
 
 describe("broker × v4 竞速", () => {
+  it("keeps native Codex questions pending without automatic resolution, then accepts option/custom answers", async () => {
+    vi.useFakeTimers();
+    try {
+      const { broker, registry, requestClient } = makeBrokerContext();
+      const input = { questions: [{ question: "Which host?", header: "Host", options: [{ label: "Existing", description: "Keep URL" }], multiSelect: false }, { question: "Address?", header: "Address", options: [], multiSelect: false }], metadata: { source: "native-codex" } };
+      const pending = broker.requestPermission(permissionRequest({ toolName: "AskUserQuestion", input }));
+      await pending.registered;
+      expect(requestClient).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ questions: [expect.objectContaining({ question: "Which host?" }), expect.objectContaining({ question: "Address?", options: [] })] }), expect.anything(), expect.anything());
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(registry.has("perm_race")).toBe(true);
+      registry.resolve("perm_race", { action: "accept", content: { answers: { "Which host?": "Existing", "Address?": "example.test" } } });
+      await expect(pending).resolves.toMatchObject({ decision: "modify", modifiedInput: { ...input, answers: { "Which host?": "Existing", "Address?": "example.test" } } });
+      expect(registry.has("perm_race")).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("v4 allowOnce 先到：取消悬空 RPC，映射为 allow", async () => {
     const { broker, registry } = makeBrokerContext();
     const pending = broker.requestPermission(permissionRequest());

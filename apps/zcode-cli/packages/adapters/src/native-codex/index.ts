@@ -7,7 +7,7 @@ import type { ModelSelection, NativeCodexModelConfig, NativeCodexModelResolver, 
 import type { Provider, ProviderModel } from "@zcode/provider";
 import { compileModelOptionMap } from "@zcode/model-option-map";
 import { CodexConnection, identifier, record, type RpcMessage } from "./connection.js";
-import { detectImageMediaType, normalizeImageMediaType, parseImageDataUrl } from "@zcode/contracts";
+import { ASK_USER_QUESTION_TOOL_NAME, NativeAskUserQuestionInputSchema, detectImageMediaType, normalizeImageMediaType, parseImageDataUrl } from "@zcode/contracts";
 
 type ExecuteInput = Parameters<NativeTurnExecutor["execute"]>[0];
 export interface NativeCodexOptions {
@@ -93,6 +93,28 @@ function toolIdentifier(value: unknown): string {
   return id;
 }
 
+function nativeQuestions(value: unknown, asyncMessage = false) {
+  if (!Array.isArray(value) || !value.length) throw new Error("Codex returned invalid user questions.");
+  const ids: string[] = [];
+  const questions = value.map((raw, index) => {
+    const question = record(raw);
+    if (question.isSecret === true) throw new Error("Native Codex secret questions are not supported.");
+    ids.push(asyncMessage ? String(index) : toolIdentifier(question.id));
+    if (question.options !== null && question.options !== undefined && !Array.isArray(question.options)) throw new Error("Codex returned invalid question options.");
+    return {
+      question: asyncMessage ? question.title : question.question,
+      header: asyncMessage ? `Question ${index + 1}` : question.header,
+      options: ((question.options ?? []) as unknown[]).map(rawOption => {
+        const option = record(rawOption);
+        return asyncMessage ? { label: rawOption, description: "" } : { label: option.label, description: option.description ?? "" };
+      }),
+      multiSelect: false as const,
+    };
+  });
+  if (new Set(ids).size !== ids.length) throw new Error("Codex returned duplicate question identifiers.");
+  return { ids, input: NativeAskUserQuestionInputSchema.parse({ questions, metadata: { source: "native-codex" } }) };
+}
+
 function validateMcpOverrides(value: unknown): string[] {
   if (!Array.isArray(value) || value.length % 2 !== 0) {
     throw new Error("Native Codex MCP overrides must be an array of -c and mcp_servers setting pairs.");
@@ -169,12 +191,17 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
     const completedMessages = new Set<string>();
     const startedTools = new Map<string, string>();
     const completedTools = new Set<string>();
+    const questionController = new AbortController();
+    const asyncQuestionItems = new Set<string>();
+    const continuationAnswers: Array<Record<string, string>> = [];
+    let questionDelivery: Promise<Record<string, string>> | undefined;
+    let startContinuation: (text: string) => Promise<void>;
     let complete!: () => void;
     let reject!: (error: Error) => void;
     const done = new Promise<void>((resolveDone, rejectDone) => { complete = resolveDone; reject = rejectDone; });
     // Handshake/storage errors can precede awaiting turn completion.
     void done.catch(() => {});
-    const fail = (error: Error) => { if (!finished) { finished = true; reject(error); connection?.close(error); } };
+    const fail = (error: Error) => { if (!finished) { finished = true; questionController.abort(error); reject(error); connection?.close(error); } };
     const emit = async (event: NativeTurnEvent) => {
       if (finished || input.signal.aborted) return;
       await input.onEvent(event);
@@ -191,6 +218,20 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       startedTools.set(id, name); toolCallCount++;
       await emit({ type: "toolStarted", id, name, input: toolInput });
     };
+    const ask = (id: string, toolCallId: string, questionInput: ReturnType<typeof nativeQuestions>["input"]) => {
+      questionDelivery = (async () => {
+        await startTool(toolCallId, ASK_USER_QUESTION_TOOL_NAME, questionInput);
+        questionController.signal.throwIfAborted();
+        const answers = await input.requestUserInput({ id, toolCallId, questions: questionInput.questions }, { signal: questionController.signal });
+        questionController.signal.throwIfAborted();
+        // 只接受明确应答；默认高亮和缺省字段都不能成为用户选择。
+        NativeAskUserQuestionInputSchema.parse({ ...questionInput, answers });
+        completedTools.add(toolCallId);
+        await emit({ type: "toolCompleted", id: toolCallId, name: ASK_USER_QUESTION_TOOL_NAME, output: JSON.stringify({ questions: questionInput.questions, answers }) });
+        return answers;
+      })();
+      return questionDelivery;
+    };
     const handle = async (message: RpcMessage) => {
       if (finished) return;
       const p = message.params;
@@ -200,8 +241,22 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
           connection?.send({ id: message.id, error: { code: invalidRequestCode, message: error.message } });
           throw error;
         }
+        if (message.method === "item/tool/requestUserInput") {
+          try {
+            const toolCallId = toolIdentifier(p.itemId);
+            if (startedTools.has(toolCallId)) throw new Error("Codex repeated a question item.");
+            const questions = nativeQuestions(p.questions);
+            const answers = await ask(String(message.id), toolCallId, questions.input);
+            if (!finished && !input.signal.aborted) connection?.send({ id: message.id, result: { answers: Object.fromEntries(questions.input.questions.flatMap((question, index) =>
+              Object.hasOwn(answers, question.question) ? [[questions.ids[index]!, { answers: [answers[question.question]!] }]] : [])) } });
+          } catch (error) {
+            if (!finished && !input.signal.aborted) connection?.send({ id: message.id, error: { code: invalidParamsCode, message: "Native user input failed." } });
+            throw error;
+          }
+          return;
+        }
         if (message.method !== "item/commandExecution/requestApproval" && message.method !== "item/fileChange/requestApproval") {
-          connection?.send({ id: message.id, error: { code: -32601, message: "Native ZCode does not support this server request (including tool user input)." } });
+          connection?.send({ id: message.id, error: { code: -32601, message: "Native ZCode does not support this server request." } });
           throw Object.assign(new Error("Codex requested an unsupported interaction. No permission was granted."), { code: "NATIVE_CODEX_UNSUPPORTED_INTERACTION" });
         }
         let toolCallId: string;
@@ -265,6 +320,13 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
             messages.set(id, item.text);
             completedMessages.add(id);
             await emit({ type: "textCompleted", itemId: id });
+            if (Array.isArray(item.questions) && item.questions.length && !asyncQuestionItems.has(id)) {
+              // 异步提问随 agentMessage 返回，旧桥只读 text，选项因此被当普通文字跳过。
+              asyncQuestionItems.add(id);
+              const questions = nativeQuestions(item.questions, true);
+              const answers = await ask(`async:${id}`, `native-question:${id}`, questions.input);
+              if (Object.keys(answers).length) continuationAnswers.push(answers);
+            }
           }
         } else if (typeof item.type === "string" && toolTypes.has(item.type)) {
           const name = item.type === "commandExecution" ? "Bash" : item.type === "fileChange" ? "Edit" : typeof item.tool === "string" ? item.tool : item.type;
@@ -280,6 +342,12 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
         const turn = record(p.turn);
         if (turn.status === "interrupted" || input.signal.aborted) throw abortError();
         if (turn.status !== "completed") throw new Error("Official Codex turn failed. Inspect its thread before submitting another input.");
+        if (continuationAnswers.length) {
+          // 异步问题没有反向 RPC；仅在旧 turn 完成后把真实答案送入同一 thread，绝不重放原输入。
+          const answers = continuationAnswers.splice(0);
+          await startContinuation(`User answered the preceding questions:\n${JSON.stringify(answers)}`);
+          return;
+        }
         finished = true; complete();
       } else if (message.method === "error" && p.willRetry !== true) {
         throw new Error("Official Codex reported a turn error.");
@@ -290,6 +358,7 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       void sequence.catch(error => fail(error instanceof Error ? error : new Error("Native event delivery failed.")));
     };
     const onAbort = () => {
+      questionController.abort(abortError());
       // 中断先发到官方进程，再关闭连接；取消不会重放已发送的提示词。
       if (connection && threadId && turnId) {
         void connection.request("turn/interrupt", { threadId, turnId }).finally(() => fail(abortError())).catch(() => {});
@@ -313,7 +382,8 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       const connect = async (activeProvider: string) => {
       connection = new CodexConnection({
         binaryPath: this.options.binaryPath,
-        args: ["app-server", "--stdio", "-c", `model=${JSON.stringify(model)}`, "-c", `model_provider=${JSON.stringify(activeProvider)}`,
+        // Codex 默认模式会在进程内拒绝 request_user_input；桥接实现后须显式开放该能力。
+        args: ["app-server", "--stdio", "-c", "features.default_mode_request_user_input=true", "-c", `model=${JSON.stringify(model)}`, "-c", `model_provider=${JSON.stringify(activeProvider)}`,
           ...[...new Set([...providerAliases, activeProvider])].flatMap(alias => [
             ...(baseUrl ? ["-c", `model_providers.${alias}.base_url=${JSON.stringify(baseUrl)}`] : []),
             ...(resolvedModel ? ["-c", `model_providers.${alias}.name="ZCode selected provider"`, "-c", `model_providers.${alias}.wire_api="responses"`, "-c", `model_providers.${alias}.requires_openai_auth=false`, "-c", `model_providers.${alias}.supports_websockets=false`] : []),
@@ -374,17 +444,25 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       try { await receipt.writeFile(JSON.stringify({ inputId: input.inputId, threadId })); await receipt.sync(); }
       finally { await receipt.close(); }
       input.signal.throwIfAborted();
-      starting = true;
-      const started = record(await connection.request("turn/start", { threadId, model, ...(resolvedModel ? { effort: effort ?? null } : {}), approvalPolicy: permission.approvalPolicy, sandboxPolicy: permission.sandboxPolicy, input: userInput }));
-      turnId = identifier(record(started.turn).id);
-      starting = false;
-      for (const message of buffered) enqueue(message);
+      const startTurn = async (items: Array<Record<string, unknown>>) => {
+        input.signal.throwIfAborted();
+        starting = true;
+        const started = record(await connection!.request("turn/start", { threadId, model, ...(resolvedModel ? { effort: effort ?? null } : {}), approvalPolicy: permission.approvalPolicy, sandboxPolicy: permission.sandboxPolicy, input: items }));
+        turnId = identifier(record(started.turn).id);
+        starting = false;
+        for (const message of buffered.splice(0)) enqueue(message);
+      };
+      startContinuation = text => startTurn([{ type: "text", text, text_elements: [] }]);
+      await startTurn(userInput);
       if (input.signal.aborted) onAbort();
       await done;
       await sequence;
       return { text, threadId, toolCallCount };
     } finally {
       finished = true;
+      questionController.abort(new Error("Native turn ended"));
+      // 连接可能在 broker 等待期间退出；先让 Core 发布 resolved，再终结整轮和工具。
+      await questionDelivery?.catch(() => {});
       input.signal.removeEventListener("abort", onAbort);
       connection?.close();
     }

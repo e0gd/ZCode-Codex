@@ -5957,7 +5957,8 @@ function normalizeAskUserQuestionPayloadQuestion(value: unknown): UserInputQuest
   const options = rawOptions
     .map(normalizeAskUserQuestionPayloadOption)
     .filter((option): option is UserInputQuestionPayload["options"][number] => option !== null);
-  if (!question || !header || options.length === 0) {
+  // Codex 的无选项问题使用同一输入面板的自由文本，不能丢掉问题正文。
+  if (!question || !header) {
     return null;
   }
   return {

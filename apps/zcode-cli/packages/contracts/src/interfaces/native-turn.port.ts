@@ -1,6 +1,7 @@
 import type { ModelSelection } from "../model/model.js";
 import type { ModelMessageContentBlock } from "../model/index.js";
 import type { CollaborationMode } from "./session.port.js";
+import type { AskUserQuestion } from "../tools/ask-user-question.js";
 
 export type NativeCodexReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
@@ -50,5 +51,7 @@ export interface NativeTurnExecutor {
     permission: { readonly mode: CollaborationMode; readonly planEnabled: boolean };
     onEvent(event: NativeTurnEvent): Promise<void>;
     requestApproval(request: NativeTurnApproval): Promise<"allow" | "deny">;
+    /** Core owns the existing user-input broker; empty answers mean no user selection. */
+    requestUserInput(request: { id: string; toolCallId: string; questions: AskUserQuestion[] }, options: { signal: AbortSignal }): Promise<Record<string, string>>;
   }): Promise<{ text: string; threadId: string; toolCallCount: number }>;
 }

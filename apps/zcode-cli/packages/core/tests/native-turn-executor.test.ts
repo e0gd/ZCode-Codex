@@ -112,6 +112,58 @@ function approvalExecutor(decisions: string[]): NativeTurnExecutor {
 }
 
 describe("native turn execution", () => {
+  const questionInput = { questions: [{ question: "Where to host?", header: "Host", options: [{ label: "Existing site", description: "Keep URL" }, { label: "New server", description: "Deploy separately" }], multiSelect: false as const }], metadata: { source: "native-codex" } };
+  const questionExecutor = (answer: (answers: Record<string, string>) => void, signal?: AbortSignal): NativeTurnExecutor => ({ async execute(input) {
+    await input.onEvent({ type: "toolStarted", id: "question-item", name: "AskUserQuestion", input: questionInput });
+    const answers = await input.requestUserInput({ id: "question-rpc", toolCallId: "question-item", questions: questionInput.questions }, { signal: signal ?? input.signal });
+    answer(answers);
+    await input.onEvent({ type: "toolCompleted", id: "question-item", name: "AskUserQuestion", output: JSON.stringify({ questions: questionInput.questions, answers }) });
+    return { text: "", threadId: "thread", toolCallCount: 1 };
+  } });
+
+  it.each(["build", "yolo", "plan"] as const)("publishes real question buttons and awaits answers in %s mode", async mode => {
+    const broker = pendingBroker(); const answer = vi.fn(); const store = createRecordingMessageStore();
+    const { runtime, eventStore, sessionId, modelFactory } = fixture(questionExecutor(answer), { permissionBroker: broker.broker, sessionStore: store as unknown as SessionStorePort });
+    runtime.updateConfig({ mode });
+    runtime.subscribeEvents({ onSessionEvent(event) {
+      if (event.type === SessionEventType.PermissionRequested) {
+        const payload = event.payload as PermissionRequestedPayload;
+        expect(payload).toMatchObject({ toolName: "AskUserQuestion", input: questionInput, riskLevel: "low" });
+        broker.resolve(payload.requestId, { decision: "modify", modifiedInput: { ...questionInput, answers: { "Where to host?": "Existing site" } } });
+      }
+    } });
+    const result = await runtime.executeTurn("ask", undefined, { inputId: "question-input" });
+    expect(answer).toHaveBeenCalledWith({ "Where to host?": "Existing site" });
+    expect(result.events.filter(e => e.type === SessionEventType.PermissionRequested)).toHaveLength(1);
+    expect(result.events.filter(e => e.type === SessionEventType.PermissionResolved)).toHaveLength(1);
+    expect(broker.pending.size).toBe(0);
+    expect(modelFactory).not.toHaveBeenCalled();
+    expect(store.savedParts.filter(p => p.type === "tool").at(-1)).toMatchObject({ tool: "AskUserQuestion", state: { status: "completed", output: expect.stringContaining("Existing site") } });
+  });
+
+  it("clears the published native question before failing on native connection cancellation", async () => {
+    const broker = pendingBroker(); const controller = new AbortController(); const answer = vi.fn();
+    const { runtime, eventStore, sessionId } = fixture(questionExecutor(answer, controller.signal), { permissionBroker: broker.broker });
+    runtime.subscribeEvents({ onSessionEvent(event) { if (event.type === SessionEventType.PermissionRequested) controller.abort(new Error("native disconnected")); } });
+    await expect(runtime.executeTurn("ask")).rejects.toBeDefined();
+    const events = await eventStore.getEvents(sessionId);
+    expect(events.filter(e => e.type === SessionEventType.PermissionResolved)).toHaveLength(1);
+    expect(broker.pending.size).toBe(0);
+    expect(answer).not.toHaveBeenCalled();
+  });
+
+  it.each(["deny", "invalid"])("does not fabricate an answer from %s", async outcome => {
+    const broker = pendingBroker(); const answer = vi.fn();
+    const { runtime, eventStore, sessionId } = fixture(questionExecutor(answer), { permissionBroker: broker.broker });
+    runtime.subscribeEvents({ onSessionEvent(event) {
+      if (event.type !== SessionEventType.PermissionRequested) return;
+      broker.resolve((event.payload as PermissionRequestedPayload).requestId, outcome === "deny" ? { decision: "deny" } : { decision: "modify", modifiedInput: { ...questionInput, answers: { "Unknown question": "Invented preference" } } });
+    } });
+    const turn = runtime.executeTurn("ask");
+    if (outcome === "deny") { await turn; expect(answer).toHaveBeenCalledWith({}); }
+    else { await expect(turn).rejects.toBeDefined(); expect(answer).not.toHaveBeenCalled(); }
+  });
+
   it("owns compact identity/dedupe and persists ordered truthful automatic markers", async () => {
     const clock = vi.spyOn(Date, "now").mockReturnValue(1700000000000);
     try {

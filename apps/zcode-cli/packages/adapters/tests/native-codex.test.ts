@@ -61,9 +61,80 @@ async function fixture() {
 function input(overrides: Partial<Parameters<NativeCodexExecutor["execute"]>[0]> = {}) {
   return { sessionId: "session-1", inputId: "input-1", text: "hello", signal: new AbortController().signal,
     permission: { mode: "build" as const, planEnabled: false },
-    onEvent: vi.fn(async (_event: NativeTurnEvent) => {}), requestApproval: vi.fn(async () => "deny" as const), ...overrides };
+    onEvent: vi.fn(async (_event: NativeTurnEvent) => {}), requestApproval: vi.fn(async () => "deny" as const),
+    requestUserInput: vi.fn(async () => ({} as Record<string, string>)), ...overrides };
 }
 const activeParams = { threadId: "thread-1", turnId: "turn-1" };
+
+describe("native question buttons", () => {
+  const questions = [
+    { id: "hosting", header: "Hosting", question: "Where to host?", isOther: true, isSecret: false, options: [{ label: "Existing site", description: "Keep the current URL" }, { label: "New server", description: "Deploy separately" }] },
+    { id: "address", header: "Address", question: "Server address?", isOther: true, isSecret: false, options: null },
+  ];
+  it("waits for explicit input and returns option/custom answers under native question IDs", async () => {
+    const rpc = server((m, emit) => {
+      if (m.method === "turn/start") {
+        emit({ id: m.id, result: { turn: { id: "turn-1" } } });
+        emit({ id: "question-rpc", method: "item/tool/requestUserInput", params: { ...activeParams, itemId: "question-item", questions, isBlocking: true } });
+        return true;
+      }
+      if (m.id === "question-rpc") emit({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed" } } });
+      return false;
+    });
+    const { executor } = await fixture();
+    const answer = Promise.withResolvers<Record<string, string>>();
+    const request = input({ requestUserInput: vi.fn(() => answer.promise) });
+    const pending = executor.execute(request);
+    await vi.waitFor(() => expect(request.requestUserInput).toHaveBeenCalledOnce());
+    expect(rpc.calls.some(call => call.id === "question-rpc")).toBe(false);
+    expect(request.requestApproval).not.toHaveBeenCalled();
+    answer.resolve({ "Where to host?": "Existing site", "Server address?": "my.example.test" });
+    await pending;
+    expect(rpc.calls.find(call => call.id === "question-rpc")?.result).toEqual({ answers: { hosting: { answers: ["Existing site"] }, address: { answers: ["my.example.test"] } } });
+    expect(vi.mocked(request.onEvent).mock.calls.map(([event]) => event.type)).toEqual(["toolStarted", "toolCompleted"]);
+  });
+
+  it("renders completed async message questions once and continues on the same thread after the answer", async () => {
+    let turns = 0;
+    const rpc = server((m, emit) => {
+      if (m.method !== "turn/start") return false;
+      const turnId = `turn-${++turns}`;
+      emit({ id: m.id, result: { turn: { id: turnId } } });
+      const item = { type: "agentMessage", id: `message-${turns}`, text: turns === 1 ? "Choose a host" : "Answer received", questions: turns === 1 ? [{ title: "Where to host?", options: ["Existing site", "New server"] }] : null };
+      emit({ method: "item/completed", params: { threadId: "thread-1", turnId, item } });
+      if (turns === 1) emit({ method: "item/completed", params: { threadId: "thread-1", turnId, item } });
+      emit({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: turnId, status: "completed" } } });
+      return true;
+    });
+    const { executor } = await fixture();
+    const request = input({ requestUserInput: vi.fn(async () => ({ "Where to host?": "Existing site" })) });
+    const result = await executor.execute(request);
+    expect(request.requestUserInput).toHaveBeenCalledOnce();
+    expect(rpc.calls.filter(call => call.method === "thread/start")).toHaveLength(1);
+    const continuation = rpc.calls.filter(call => call.method === "turn/start")[1];
+    expect(continuation?.params?.threadId).toBe("thread-1");
+    expect(JSON.stringify(continuation?.params?.input)).toContain("Existing site");
+    expect(result.text).toBe("Choose a hostAnswer received");
+  });
+
+  it.each(["cancel", "disconnect"])("settles a pending question on %s without fabricating an answer", async outcome => {
+    const rpc = server((m, emit) => {
+      if (m.method !== "turn/start") return false;
+      emit({ id: m.id, result: { turn: { id: "turn-1" } } });
+      emit({ id: "question-rpc", method: "item/tool/requestUserInput", params: { ...activeParams, itemId: "question-item", questions } });
+      return true;
+    });
+    const { executor } = await fixture(); const controller = new AbortController();
+    const request = input({ signal: controller.signal, requestUserInput: vi.fn(async (_request, options) => {
+      return new Promise<Record<string, string>>((_resolve, reject) => options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true }));
+    }) });
+    const pending = executor.execute(request);
+    await vi.waitFor(() => expect(request.requestUserInput).toHaveBeenCalledOnce());
+    if (outcome === "cancel") controller.abort(); else rpc.children[0]!.emit("exit", 1);
+    await expect(pending).rejects.toBeDefined();
+    expect(rpc.calls.some(call => call.id === "question-rpc")).toBe(false);
+  });
+});
 
 describe("native image inputs", () => {
   const image = { type: "image" as const, mediaType: "image/png", dataUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1sAAAAASUVORK5CYII=" };
@@ -534,7 +605,7 @@ describe("native Codex transport", () => {
     const remote = server((m, emit) => {
       if (m.method !== "turn/start") return false;
       emit({ id: m.id, result: { turn: { id: "turn-1" } } });
-      emit({ id: "q", method: "item/tool/requestUserInput", params: { ...activeParams, questions: [] } });
+      emit({ id: "q", method: "item/unknown/requestInput", params: { ...activeParams } });
       return true;
     });
     const { executor } = await fixture(); const request = input();

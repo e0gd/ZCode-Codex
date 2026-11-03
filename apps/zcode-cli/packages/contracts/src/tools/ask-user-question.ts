@@ -148,6 +148,27 @@ export const AskUserQuestionInputSchema = z
 
 export type AskUserQuestionInput = z.infer<typeof AskUserQuestionInputSchema>;
 
+// Codex 的结构化问题允许纯文本和单选项；单独校验，不能放宽普通工具的 2-4 选项合同。
+export const NativeAskUserQuestionInputSchema = z.object({
+  questions: z.array(z.object({
+    question: z.string().trim().min(1),
+    header: z.string().min(1),
+    options: z.array(AskUserQuestionOptionSchema).max(64),
+    multiSelect: z.literal(false).default(false),
+  }).strict()).min(1).max(16),
+  answers: z.record(z.string()).optional(),
+  metadata: z.object({ source: z.literal("native-codex") }).strict(),
+}).strict().superRefine((input, context) => {
+  if (new Set(input.questions.map(q => q.question)).size !== input.questions.length ||
+    input.questions.some(q => new Set(q.options.map(o => o.label)).size !== q.options.length)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Native question texts and option labels must be unique" });
+  }
+  const questions = new Set(input.questions.map(q => q.question));
+  for (const [question, answer] of Object.entries(input.answers ?? {})) {
+    if (!questions.has(question) || !answer.trim()) context.addIssue({ code: z.ZodIssueCode.custom, message: "Invalid native question answer", path: ["answers", question] });
+  }
+});
+
 export const AskUserQuestionAnsweredInputSchema = AskUserQuestionInputSchema.superRefine(
   (input, context) => {
     // 问题用于可选澄清，用户可以完整、部分或零回答；只有 answers 字段
