@@ -1,6 +1,6 @@
 # ZCode-Codex
 
-This experimental branch adds a project-level choice between ZCode and the official Codex app-server. New projects default to ZCode; selecting Codex applies to every session created or resumed in that project. ZCode continues to own input admission, session persistence, approvals, cancellation, and desktop/mobile projections. Existing projects and conversations without a project default to ZCode.
+This experimental branch integrates the official Codex app-server into ZCode while preserving ZCode's native execution. Users work through the ZCode interface and select the execution method per project. The Codex CLI is installed separately and started by ZCode. New projects default to ZCode; selecting Codex applies to every session created or resumed in that project. ZCode continues to own input admission, session persistence, approvals, cancellation, and desktop/mobile projections. Existing projects and conversations without a project default to ZCode.
 
 The branch starts at upstream `a60ba6a7e5a06742270ca605f5d2cc2766afa7e1` (ZCode 3.17.1), preserving its Git history. The migration contains the existing native executor, provider/model selection, approval and transcript fixes, and context-compaction notification handling. It includes the two compaction metadata/recovery changes that were absent from the external patch manifest. Source archives, local launchers, databases, credentials, installed applications, and machine diagnostics are not part of this branch.
 

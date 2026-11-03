@@ -11,7 +11,7 @@
   简体中文 | <a href="README.en.md">English</a>
 </p>
 
-ZCode-Codex 是基于 [ZCode](https://github.com/zai-org/ZCode) 的双引擎 AI 编程工作台，保留原生 ZCode，并接入单独安装的官方 Codex。仓库包含桌面客户端、Web、共享 UI 和 Agent CLI 源码。
+ZCode-Codex 是集成 Codex 的 [ZCode](https://github.com/zai-org/ZCode) AI 编程工作台，在保留原生 ZCode 功能的基础上，让用户在 ZCode 界面中使用官方 Codex。Codex CLI 需单独安装，由 ZCode 查找并启动。仓库包含桌面客户端、Web、共享 UI 和 Agent CLI 源码。
 
 默认开发分支为 `native-codex`；`main` 保留上游基线。新建项目默认使用 ZCode，也可选择 Codex；保存后该项目的会话固定经过所选引擎，旧项目默认 ZCode。Codex 使用 ZCode 中配置的 API 服务商和模型，目前支持 OpenAI Responses 与 API Key，无需为项目设置环境变量。
 
@@ -41,7 +41,7 @@ ZCode-Codex 是基于 [ZCode](https://github.com/zai-org/ZCode) 的双引擎 AI 
 
 ## 更新
 
-- **2026-11-03**：双引擎项目、图片输入、交互提问、Codex 自动派生设置与子 Agent 可视化；修复纯文字提问被 Host 拒绝的问题。
+- **2026-11-03**：在 ZCode 中集成 Codex，支持按项目选择执行方式、图片输入、交互提问、Codex 自动派生设置与子 Agent 可视化；修复纯文字提问被 Host 拒绝的问题。
 - **2026-10-30**：更新至 ZCode v3.17.1 版本。
 - 2026-10-19：更新至 ZCode v3.16.2 版本。
 - 2026-10-16：更新至 ZCode v3.16.1 版本。

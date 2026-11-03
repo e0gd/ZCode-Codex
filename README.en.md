@@ -11,7 +11,7 @@
   <a href="README.md">简体中文</a> | English
 </p>
 
-ZCode-Codex is a dual-engine AI coding workspace based on [ZCode](https://github.com/zai-org/ZCode). It retains ZCode and integrates the separately installed official Codex CLI. This repository includes the desktop client, Web interface, shared UI and Agent CLI source.
+ZCode-Codex integrates Codex into the [ZCode](https://github.com/zai-org/ZCode) AI coding workspace, preserving native ZCode features while making official Codex available through the ZCode interface. Install the Codex CLI separately; ZCode locates and starts it. This repository includes the desktop client, Web interface, shared UI and Agent CLI source.
 
 The development branch is `native-codex`; `main` preserves the upstream baseline. New projects default to ZCode; choosing Codex at creation fixes that project's sessions to Codex. Existing projects default to ZCode. Codex uses the provider and model configured in ZCode, currently OpenAI Responses with an API key, without per-project environment variables.
 
