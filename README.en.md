@@ -31,7 +31,7 @@ Install the [official Codex CLI](https://github.com/openai/codex) separately, co
 | --- | --- | --- | --- |
 | Windows | x64, arm64 | `.exe` installer | x64 preview installer published; portable runtime validated locally, clean-machine installation awaits acceptance |
 | macOS | Apple Silicon arm64, Intel x64 | `.dmg`, `.zip` | Both architectures built and published; actual desktop runtime awaits acceptance |
-| Linux | x64, arm64 | `.AppImage`, `.deb`, `.rpm`, `.pkg.tar.zst` | Build entry available; branch packages and runtime await validation |
+| Linux | x64, arm64 | `.AppImage`, `.deb`, `.rpm`, `.pkg.tar.zst` | All four x64 formats built and published; arm64 builds and actual desktop runtime await acceptance |
 
 Download the actual attachments in this fork's [Releases](https://github.com/e0gd/ZCode-Codex/releases). No attachments means no published package; upstream installers do not contain this integration. Source commands appear below under Packaging. Codex is not bundled. To build a Preview application alongside the original while using the production backend, set `ZCODE_ENV=production` and `ZCODE_PREVIEW_IDENTITY=1`. Renaming the repository does not migrate application data or change an existing local installation's independent data.
 

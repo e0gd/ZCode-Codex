@@ -31,7 +31,7 @@ ZCode-Codex 是基于 [ZCode](https://github.com/zai-org/ZCode) 的双引擎 AI 
 | --- | --- | --- | --- |
 | Windows | x64、arm64 | `.exe` 安装程序 | x64 预览安装包已发布；便携目录通过本地运行验证，干净机器安装待验收 |
 | macOS | Apple Silicon arm64、Intel x64 | `.dmg`、`.zip` | 两种架构均已构建并发布；真实桌面运行待验收 |
-| Linux | x64、arm64 | `.AppImage`、`.deb`、`.rpm`、`.pkg.tar.zst` | 构建入口已提供，分支安装包与运行待验证 |
+| Linux | x64、arm64 | `.AppImage`、`.deb`、`.rpm`、`.pkg.tar.zst` | x64 四种格式均已构建并发布；arm64 构建与真实桌面运行待验收 |
 
 公开安装包以本仓库 [Releases](https://github.com/e0gd/ZCode-Codex/releases) 实际附件为准；没有附件表示尚未发布，上游安装包不包含修改版功能。各系统的源码构建命令见下方“打包”。Codex 不随安装包内置。自行打包要与原版并排安装时，设置 `ZCODE_ENV=production`、`ZCODE_PREVIEW_IDENTITY=1`。仓库改名不会自动迁移原版数据，也不会改变已有本地修改版的独立数据。
 
