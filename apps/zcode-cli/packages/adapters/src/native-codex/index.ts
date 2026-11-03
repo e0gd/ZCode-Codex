@@ -7,6 +7,7 @@ import type { ModelSelection, NativeCodexModelConfig, NativeCodexModelResolver, 
 import type { Provider, ProviderModel } from "@zcode/provider";
 import { compileModelOptionMap } from "@zcode/model-option-map";
 import { CodexConnection, identifier, record, type RpcMessage } from "./connection.js";
+import { detectImageMediaType, normalizeImageMediaType, parseImageDataUrl } from "@zcode/contracts";
 
 type ExecuteInput = Parameters<NativeTurnExecutor["execute"]>[0];
 export interface NativeCodexOptions {
@@ -30,6 +31,25 @@ const invalidRequestCode = -32600;
 const invalidParamsCode = -32602;
 const approvalFailureCode = -32603;
 const nativeEfforts = new Set<NativeCodexReasoningEffort>(["none", "minimal", "low", "medium", "high", "xhigh"]);
+
+function nativeUserInput(input: ExecuteInput): Array<Record<string, unknown>> {
+  const items: Array<Record<string, unknown>> = [];
+  const appendText = (text: string) => { if (text) items.push({ type: "text", text, text_elements: [] }); };
+  appendText(input.text);
+  for (const block of input.attachments ?? []) {
+    if (block.type === "image") {
+      // Web 上传已由 Core 从 artifact 解析；原生协议只接收图像字节，不能把 URI 或远端路径交给 localImage。
+      const parsed = parseImageDataUrl(block.dataUrl);
+      if (!parsed || parsed.mediaType !== normalizeImageMediaType(block.mediaType) || detectImageMediaType(parsed.data) !== parsed.mediaType) {
+        throw new Error("Native Codex image attachment must contain valid image data matching its media type.");
+      }
+      items.push({ type: "image", url: parsed.dataUrl, ...(block.detail ? { detail: block.detail } : {}) });
+    } else if (block.type === "text") appendText(block.text);
+    else if (block.type === "resource_link") appendText(block.uri);
+    else throw new Error(`Native Codex does not support ${block.type} attachments. Attach an image or a text file instead.`);
+  }
+  return items;
+}
 
 /** Convert already-authorized registry facts, never submission-supplied provider configuration. */
 export function resolveNativeCodexModelConfig(selection: ModelSelection, provider: Provider, model: ProviderModel): NativeCodexModelConfig {
@@ -101,6 +121,7 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
 
   async execute(input: ExecuteInput): ReturnType<NativeTurnExecutor["execute"]> {
     input.signal.throwIfAborted();
+    const userInput = nativeUserInput(input);
     input = { ...input, permission: { ...input.permission } };
     const configOverrides = validateMcpOverrides(this.options.configOverrides ?? []);
     const resolvedModel = input.modelSelection
@@ -129,11 +150,11 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       }
       throw error;
     }
-    try { return await this.run(input, workspace, directory, configOverrides, resolvedModel); }
+    try { return await this.run(input, workspace, directory, configOverrides, resolvedModel, userInput); }
     finally { await rm(lock, { recursive: true, force: true }); }
   }
 
-  private async run(input: ExecuteInput, workspace: string, directory: string, configOverrides: string[], resolvedModel?: NativeCodexModelConfig): ReturnType<NativeTurnExecutor["execute"]> {
+  private async run(input: ExecuteInput, workspace: string, directory: string, configOverrides: string[], resolvedModel: NativeCodexModelConfig | undefined, userInput: Array<Record<string, unknown>>): ReturnType<NativeTurnExecutor["execute"]> {
     let connection: CodexConnection | undefined;
     const permission = nativePermission(input.permission);
     let threadId = "";
@@ -354,7 +375,7 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       finally { await receipt.close(); }
       input.signal.throwIfAborted();
       starting = true;
-      const started = record(await connection.request("turn/start", { threadId, model, ...(resolvedModel ? { effort: effort ?? null } : {}), approvalPolicy: permission.approvalPolicy, sandboxPolicy: permission.sandboxPolicy, input: [{ type: "text", text: input.text, text_elements: [] }] }));
+      const started = record(await connection.request("turn/start", { threadId, model, ...(resolvedModel ? { effort: effort ?? null } : {}), approvalPolicy: permission.approvalPolicy, sandboxPolicy: permission.sandboxPolicy, input: userInput }));
       turnId = identifier(record(started.turn).id);
       starting = false;
       for (const message of buffered) enqueue(message);

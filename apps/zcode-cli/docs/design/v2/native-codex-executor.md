@@ -139,6 +139,14 @@ launcher -> verify installed per-workspace Host + registered project
 
 Regression coverage must include exact versus sibling/case-normalized paths, missing opt-in, Worker cwd precedence, original-route environment cleanup, installed contract rejection, and actual isolated storage preparation plus capabilities for both CLI routes. Compare migration ledgers in isolated databases before claiming shared-schema compatibility. Never prepare or migrate the live database as part of these tests. This change fixes overly broad runtime selection; it does not establish a cause for UI unresponsiveness.
 
+## Image attachments
+
+Desktop and Web/mobile submissions share the existing CommandInbox admission and attachment resolver. Core persists the user message and its file parts before native execution, then passes the resolved provider-neutral attachment content blocks to NativeTurnExecutor. It must not pass browser file paths, artifact URIs, or raw upload handles as native localImage paths. Inline, local-file and uploaded artifact images all use the same resolver, including its resize, size limits and recoverable storage.
+
+The native adapter converts resolved image data URLs to Codex `turn/start` image inputs (`type: "image", url: dataUrl`). Text attachments and resource links become explicit text inputs; unsupported file/video media and failed image resolution fail explicitly before spawning Codex or changing a thread. Images never enter logs or get replaced with filename-only placeholders. Existing thread mapping, permission snapshot, cancellation, and continuous versus replayable event delivery stay unchanged. A restored session resumes its original Codex thread, which owns prior multimodal context.
+
+Regression evidence must cover text plus image and image-only turns, several images in order, uploaded artifact and local-image resolution, invalid/unsupported media rejection, persisted user file parts, and image delivery on the resumed native thread. Real runtime acceptance must inspect the Responses image payload through the official Codex binary with a local fixture; no paid inference is necessary.
+
 ## Validation
 
 The staged helper execution tests cover stream/final agreement, final-only output, tool persistence, deny/modify decisions and cancellation. Core Vitest regression cases exercise the actual runtime with a modelFactory that throws if called. Missing source packages or dependency declarations must be reported separately from a verified full CLI typecheck. Before release run CLI typecheck/lint, affected Core/adapter tests, architecture checks, and desktop plus mobile replay/approval/cancellation acceptance.

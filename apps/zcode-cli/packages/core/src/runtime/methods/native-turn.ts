@@ -3,6 +3,7 @@ import type { MessageId, SessionEvent, ToolCallId, TraceContext } from "../deps.
 import type {
   CompactionPart,
   ModelSelection,
+  ModelMessageContentBlock,
   Model,
   PermissionBrokerResult,
   PermissionRequestedPayload,
@@ -19,6 +20,7 @@ export async function executeNativeTurn(
   this: AgentRuntimeInternal,
   input: {
     text: string;
+    attachments?: readonly ModelMessageContentBlock[];
     modelSelection?: ModelSelection;
     inputId: string;
     signal: AbortSignal;
@@ -157,6 +159,7 @@ export async function executeNativeTurn(
       sessionId: this.sessionId,
       inputId: input.inputId,
       text: input.text,
+      ...(input.attachments?.length ? { attachments: input.attachments } : {}),
       signal: input.signal,
       ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
       permission,

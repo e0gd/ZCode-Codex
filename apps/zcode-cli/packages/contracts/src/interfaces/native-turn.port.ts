@@ -1,4 +1,5 @@
 import type { ModelSelection } from "../model/model.js";
+import type { ModelMessageContentBlock } from "../model/index.js";
 import type { CollaborationMode } from "./session.port.js";
 
 export type NativeCodexReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -40,6 +41,8 @@ export interface NativeTurnExecutor {
     sessionId: string;
     inputId: string;
     text: string;
+    /** Resolved by Core and persisted with the user message; never browser paths/upload handles. */
+    readonly attachments?: readonly ModelMessageContentBlock[];
     signal: AbortSignal;
     /** Exact admitted selection, or the session snapshot for a direct caller. No endpoints/keys. */
     readonly modelSelection?: ModelSelection;

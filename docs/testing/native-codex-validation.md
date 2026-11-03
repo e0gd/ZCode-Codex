@@ -115,6 +115,16 @@ No product source was changed. After closing the desktop, all test processes and
 
 ## Local evidence
 
+### Image upload follow-up
+
+The native path previously rejected all attachments after Core had already resolved and persisted them. Core now forwards resolved content blocks through the native port; the adapter maps image data URLs to Codex image inputs, and rejects failed resolution or unsupported media before dispatch. Existing admission, file-part persistence and thread ownership are unchanged.
+
+Focused regression results: adapter **78/78**, Core native-turn executor **51/51**. Coverage includes image-only turns, ordered multiple images, uploaded artifact resolution, local-file resolution, persisted user file parts, rejection before spawn and same-thread resume. Root and CLI typecheck passed; root lint reported 0 errors / 83 warnings, CLI lint 0 errors / 73 warnings plus its admitted upstream line-count diagnostics. An additional prompt-attachment suite run exposed two Windows path expectation failures in the unchanged `prompt-attachments.test.ts`; that broader suite is not reported as passing.
+
+Two isolated runtime checks used official Codex 0.166.0 and a loopback Responses fixture with dummy credentials. Direct adapter execution delivered the exact image data in text-plus-image and image-only requests on the same thread. The packaged Windows CLI was then run using its packaged Electron Node runtime and trusted Host preference selecting Codex: `v4/attachment/begin` → `chunk` → `commit` → `sendText` delivered uploaded bytes to the actual Codex Responses request. After stopping and restarting the CLI, another image-only upload completed on the same mapped thread, with a `web-remote-replayable` snapshot showing success. Both captured image payloads matched the original PNG bytes. This validates packaged upload/runtime/replay integration; it does not establish live-provider inference, external relay connectivity or physical phone acceptance.
+
+Local follow-up evidence is retained under `%LOCALAPPDATA%/CodexGitSetup/`: `native-attachment-*.log`, `native-image-runtime.log`, `image-runtime-*/report.json`, `packaged-image-upload.log`, `packaged-image-upload-*/report.json`, `native-image-desktop-build.log` and `native-image-package.log`. Test homes and Codex threads are isolated from the live installation.
+
 Raw evidence stays outside Git under the validation machine's `%LOCALAPPDATA%/CodexGitSetup/` directory:
 
 - `adapter-baseline-audit/REPORT.md`: case-by-case findings.

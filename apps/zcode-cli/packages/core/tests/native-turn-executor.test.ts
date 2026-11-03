@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { join } from "node:path";
 import {
   CoreErrorType,
   EventReducer,
@@ -434,6 +435,59 @@ describe("native turn execution", () => {
       types.indexOf(SessionEventType.TurnComplete),
     );
     expect(types.filter((type) => type === SessionEventType.TurnComplete)).toHaveLength(1);
+  });
+
+  it.each(["describe this picture", ""])("passes resolved image bytes to native execution and persists its user file part (%s)", async text => {
+    const image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1sAAAAASUVORK5CYII=";
+    const execute = vi.fn<NativeTurnExecutor["execute"]>(async () => ({ text: "image received", threadId: "codex-thread", toolCallCount: 0 }));
+    const store = createRecordingMessageStore();
+    const { runtime, modelFactory } = fixture({ execute }, { sessionStore: store as unknown as SessionStorePort });
+    const result = await runtime.executeTurn(text, [{ type: "image", content: image, filename: "phone-upload.png", mimeType: "image/png" }], { inputId: "image-input" });
+    expect(result.response).toBe("image received");
+    expect(execute).toHaveBeenCalledOnce();
+    expect(execute.mock.calls[0]![0].attachments).toEqual([expect.objectContaining({ type: "image", dataUrl: image, mediaType: "image/png" })]);
+    expect(store.savedParts).toContainEqual(expect.objectContaining({ type: "file", mime: "image/png" }));
+    expect(result.events.find(e => e.type === SessionEventType.TurnStarted)?.payload).toEqual(expect.objectContaining({ attachments: [expect.objectContaining({ fileName: "phone-upload.png" })] }));
+    expect(modelFactory).not.toHaveBeenCalled();
+  });
+
+  it("resolves a Web upload artifact instead of sending its URI to Codex", async () => {
+    const image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1sAAAAASUVORK5CYII=";
+    const execute = vi.fn<NativeTurnExecutor["execute"]>(async () => ({ text: "uploaded image", threadId: "codex-thread", toolCallCount: 0 }));
+    const readToolResultArtifact = vi.fn(async () => ({ content: image }));
+    const writeToolResultArtifact = vi.fn();
+    const store = createRecordingMessageStore();
+    const { runtime } = fixture({ execute }, {
+      sessionStore: store as unknown as SessionStorePort,
+      artifactStore: { readToolResultArtifact, writeToolResultArtifact } as never,
+    });
+    await runtime.executeTurn("describe", [{ type: "image", content: "zcode-artifact://phone-upload", filename: "upload.png", mimeType: "image/png" }]);
+    expect(readToolResultArtifact).toHaveBeenCalledOnce();
+    expect(writeToolResultArtifact).not.toHaveBeenCalled();
+    expect(execute.mock.calls[0]![0].attachments).toEqual([expect.objectContaining({ type: "image", dataUrl: image })]);
+    expect(store.savedParts).toContainEqual(expect.objectContaining({ type: "file", url: "zcode-artifact://phone-upload" }));
+  });
+
+  it("fails an unreadable uploaded image before native execution rather than dropping it", async () => {
+    const execute = vi.fn<NativeTurnExecutor["execute"]>();
+    const { runtime, modelFactory } = fixture({ execute }, { artifactStore: { readToolResultArtifact: vi.fn(async () => { throw new Error("artifact unavailable"); }) } as never });
+    await expect(runtime.executeTurn("describe", [{ type: "image", content: "zcode-artifact://missing", mimeType: "image/png" }])).rejects.toMatchObject({ cause: expect.objectContaining({ message: expect.stringContaining("attachment could not be read") }) });
+    expect(execute).not.toHaveBeenCalled();
+    expect(modelFactory).not.toHaveBeenCalled();
+  });
+
+  it("reads a local image through Core before passing bytes to native execution", async () => {
+    const path = join(process.cwd(), "frame.png");
+    const content = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAsSURBVFhH7c4hAQAADASh61/6F2MGgafVPgkICAgICAgICAgICAgICDwH2gFUDfhqkE3cCgAAAABJRU5ErkJggg==";
+    const execute = vi.fn<NativeTurnExecutor["execute"]>(async () => ({ text: "local image", threadId: "codex-thread", toolCallCount: 0 }));
+    const readTextFile = vi.fn(async () => ({ path, content, encoding: "base64", bytesRead: 154, sizeBytes: 154, truncated: false }));
+    const { runtime, modelFactory } = fixture({ execute }, {
+      fileSystemPort: { stat: async () => ({ path, kind: "file", mtimeMs: 1, sizeBytes: 154 }), readTextFile } as never,
+    });
+    await runtime.executeTurn("describe local image", [{ type: "image", path: "frame.png" }]);
+    expect(readTextFile).toHaveBeenCalledWith(expect.objectContaining({ path, encoding: "base64" }), expect.any(Object));
+    expect(execute.mock.calls[0]![0].attachments).toEqual([expect.objectContaining({ type: "image", dataUrl: `data:image/png;base64,${content}` })]);
+    expect(modelFactory).not.toHaveBeenCalled();
   });
 
   it.each(["allow", "deny", "modify", "escalate"] as const)(

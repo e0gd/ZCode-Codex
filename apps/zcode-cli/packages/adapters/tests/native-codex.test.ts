@@ -65,6 +65,37 @@ function input(overrides: Partial<Parameters<NativeCodexExecutor["execute"]>[0]>
 }
 const activeParams = { threadId: "thread-1", turnId: "turn-1" };
 
+describe("native image inputs", () => {
+  const image = { type: "image" as const, mediaType: "image/png", dataUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1sAAAAASUVORK5CYII=" };
+
+  it("sends images and attachment text in order on both new and resumed threads", async () => {
+    const rpc = server(); const { executor } = await fixture();
+    for (const text of ["describe these", ""]) {
+      await executor.execute(input({ text, inputId: `image-${text || "only"}`, attachments: [image, { type: "text", text: "image notes" }, image] }));
+    }
+    const turns = rpc.calls.filter(call => call.method === "turn/start");
+    expect(turns.map(call => call.params?.input)).toEqual(["describe these", ""].map(text => [
+      ...(text ? [{ type: "text", text, text_elements: [] }] : []),
+      { type: "image", url: image.dataUrl },
+      { type: "text", text: "image notes", text_elements: [] },
+      { type: "image", url: image.dataUrl },
+    ]));
+    expect(rpc.calls.filter(call => call.method === "thread/start")).toHaveLength(1);
+    expect(rpc.calls.filter(call => call.method === "thread/resume")).toHaveLength(1);
+  });
+
+  it.each([
+    { type: "image" as const, mediaType: "image/png", dataUrl: "https://example.test/private.png" },
+    { type: "image" as const, mediaType: "image/jpeg", dataUrl: image.dataUrl },
+    { type: "file" as const, mediaType: "application/pdf", dataUrl: "data:application/pdf;base64,JVBERg==" },
+    { type: "video" as const, mediaType: "video/mp4", dataUrl: "data:video/mp4;base64,AAAA" },
+  ])("rejects invalid or unsupported media before touching a native thread: $type $mediaType", async attachment => {
+    server(); const { executor } = await fixture();
+    await expect(executor.execute(input({ attachments: [attachment] }))).rejects.toThrow(/Native Codex.*(image|attachment)/);
+    expect(mock.spawn).not.toHaveBeenCalled();
+  });
+});
+
 describe("project Codex discovery", () => {
   async function binary(path: string) {
     await mkdir(join(path, ".."), { recursive: true });

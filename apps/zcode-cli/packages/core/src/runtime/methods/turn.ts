@@ -761,9 +761,12 @@ export async function executeTurnCommand(
         }
         if (this.nativeTurnExecutor) {
           // Codex 拥有完整模型/工具循环；沿用本层输入、终态与取消收尾，不构造 ZCode Model。
-          if (attachments?.length) throw new Error("Native Codex attachments are not supported yet");
+          // 原生分支曾在标准解析/持久化后无条件拒绝附件；只交付已解析内容，不能把手机路径当作本机文件。
+          const failedAttachment = resolvedAttachments.find(attachment => attachment.metadata.errorCode);
+          if (failedAttachment) throw new Error(`Native Codex attachment could not be read (${failedAttachment.metadata.errorCode})`);
           const nativeResult = await executeNativeTurn.call(this, {
             text: input, inputId: options?.inputId ?? String(turnId),
+            attachments: resolvedAttachments.map(attachment => attachment.contentBlock),
             ...(nativeModelSelection ? { modelSelection: nativeModelSelection } : {}),
             signal: turnAbortSignal, traceContext: turnTraceContext,
             userMessageId, events,
