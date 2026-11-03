@@ -1,4 +1,4 @@
-# ZCode
+# ZCode-Codex
 
 <div align="center">
   <img src="public/logo/icons/1024x1024.png" alt="ZCode" width="128" height="128" />
@@ -11,12 +11,35 @@
   简体中文 | <a href="README.en.md">English</a>
 </p>
 
-ZCode 是 AI 编程工作台，提供桌面应用、浏览器界面和终端 Agent。本仓库包含客户端、后端服务、共享 UI，以及 Agent CLI 与运行时源码。
+ZCode-Codex 是基于 [ZCode](https://github.com/zai-org/ZCode) 的双引擎 AI 编程工作台，保留原生 ZCode，并接入单独安装的官方 Codex。仓库包含桌面客户端、Web、共享 UI 和 Agent CLI 源码。
 
-本 Fork 的 `native-codex` 分支提供项目级双引擎：新建项目默认使用 ZCode，也可选择 Codex；保存后引擎固定，旧项目默认 ZCode。Codex 需单独安装，使用 ZCode 中的 API 配置，目前支持 OpenAI Responses 与 API Key，无需配置工作区环境变量。受控源码桌面验收已覆盖同目录双引擎项目、真实会话路由及完整进程重启后两种会话的恢复。标准开发命令构建成功，但隔离启动遇到 ARMS 初始化阻塞，验收使用同一构建直接启动 Electron。CLI 全量测试尚有失败，真实模型服务、手机端和安装打包未验收。详见 [分支说明及验证记录](NATIVE_CODEX.md)。
+默认开发分支为 `native-codex`；`main` 保留上游基线。新建项目默认使用 ZCode，也可选择 Codex；保存后该项目的会话固定经过所选引擎，旧项目默认 ZCode。Codex 使用 ZCode 中配置的 API 服务商和模型，目前支持 OpenAI Responses 与 API Key，无需为项目设置环境变量。
+
+- 支持 Codex 文本与图片输入，上传的图片沿用现有附件入口。
+- 结构化提问显示选项按钮或文字输入框，等待用户明确回答。
+- Codex 子 Agent 接入已有提示、输入区机器人按钮、后台列表和只读子会话查看。
+- 设置 → Agent 能力 → 子 Agent 可控制 Codex 是否自动派生子 Agent，默认关闭；连接该电脑的 Web 会话在下一轮使用保存的设置。
+- 桌面与连接到该桌面的 Web/手机共享执行会话；官网托管前端不会因安装修改版而获得新增控件。
+
+详见 [使用说明与限制](NATIVE_CODEX.md) 和 [验证记录](docs/testing/native-codex-validation.md)。这是社区 Fork，与上游 ZCode 和 OpenAI 官方发行版分开维护。
+
+## 安装与系统支持
+
+先单独安装 [官方 Codex CLI](https://github.com/openai/codex)，再在 ZCode 中配置兼容的 API 服务商与模型，创建项目时选择 **执行引擎 → Codex**。使用 ZCode 引擎的项目无需安装 Codex。
+
+| 系统 | 源码打包架构 | 产物格式 | 本分支验证状态 |
+| --- | --- | --- | --- |
+| Windows | x64、arm64 | `.exe` 安装程序 | x64 完整便携目录已构建并本地安装；安装程序流程待验收 |
+| macOS | Apple Silicon arm64、Intel x64 | `.dmg`、`.zip` | 构建入口已提供，分支安装包与运行待验证 |
+| Linux | x64、arm64 | `.AppImage`、`.deb`、`.rpm`、`.pkg.tar.zst` | 构建入口已提供，分支安装包与运行待验证 |
+
+公开安装包以本仓库 [Releases](https://github.com/e0gd/ZCode-Codex/releases) 实际附件为准；没有附件表示尚未发布，上游安装包不包含修改版功能。各系统的源码构建命令见下方“打包”。Codex 不随安装包内置。自行打包要与原版并排安装时，设置 `ZCODE_ENV=production`、`ZCODE_PREVIEW_IDENTITY=1`。仓库改名不会自动迁移原版数据，也不会改变已有本地修改版的独立数据。
+
+也可在 [Actions → Desktop packages](https://github.com/e0gd/ZCode-Codex/actions/workflows/desktop-packages.yml) 手动构建 Windows x64、macOS arm64/x64 和 Linux x64，成功的任务提供安装包与 SHA256 校验文件。当前是构建入口，实际可下载状态以任务结果为准；[构建与下载说明](docs/testing/desktop-packages.md) 包含限制和操作步骤。
 
 ## 更新
 
+- **2026-11-03**：双引擎项目、图片输入、交互提问、Codex 自动派生设置与子 Agent 可视化；修复纯文字提问被 Host 拒绝的问题。
 - **2026-10-30**：更新至 ZCode v3.17.1 版本。
 - 2026-10-19：更新至 ZCode v3.16.2 版本。
 - 2026-10-16：更新至 ZCode v3.16.1 版本。
@@ -158,6 +181,11 @@ pnpm bundle:desktop
 
 # 指定目标平台与 CPU 架构
 pnpm bundle:desktop -- --os win --arch x64
+
+pnpm bundle:desktop -- --os mac --arch arm64
+pnpm bundle:desktop -- --os mac --arch x64
+pnpm bundle:desktop -- --os linux --arch x64
+pnpm bundle:desktop -- --os linux --arch arm64
 
 pnpm bundle:desktop -- --help
 ```

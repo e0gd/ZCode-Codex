@@ -1,0 +1,90 @@
+name: Desktop packages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-packages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: ${{ matrix.os }} / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            os: win
+            arch: x64
+          - runner: macos-15
+            os: mac
+            arch: arm64
+          - runner: macos-15-intel
+            os: mac
+            arch: x64
+          - runner: ubuntu-24.04
+            os: linux
+            arch: x64
+    defaults:
+      run:
+        shell: bash
+    env:
+      ZCODE_ENV: production
+      ZCODE_PREVIEW_IDENTITY: '1'
+      ZCODE_TARGET_OS: ${{ matrix.os }}
+      ZCODE_TARGET_ARCH: ${{ matrix.arch }}
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
+      ELECTRON_BUILDER_BINARIES_MIRROR: https://github.com/electron-userland/electron-builder-binaries/releases/download/
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.0
+          cache: pnpm
+      - name: Linux packaging dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y rpm libarchive-tools libfuse2t64
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build desktop packages
+        run: pnpm bundle:desktop -- --os "${{ matrix.os }}" --arch "${{ matrix.arch }}"
+      - name: Collect installers and checksums
+        env:
+          PACKAGE_OS: ${{ matrix.os }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readdir, readFile, mkdir, copyFile, writeFile } from 'node:fs/promises';
+          import { createHash } from 'node:crypto';
+          import assert from 'node:assert/strict';
+          const source = 'packages/desktop/dist';
+          const groups = { win: [/\.exe$/i], mac: [/\.dmg$/i, /\.zip$/i], linux: [/\.AppImage$/i, /\.deb$/i, /\.rpm$/i, /\.pkg\.tar\.zst$/i] };
+          const required = groups[process.env.PACKAGE_OS];
+          const files = (await readdir(source, {withFileTypes: true})).filter(e => e.isFile()).map(e => e.name);
+          for (const pattern of required) assert(files.some(file => pattern.test(file)), 'Missing package format: ' + pattern);
+          const selected = files.filter(file => required.some(pattern => pattern.test(file))).sort();
+          await mkdir('release-artifacts', { recursive: true });
+          const checksums = [];
+          for (const file of selected) {
+            await copyFile(source + '/' + file, 'release-artifacts/' + file);
+            checksums.push(createHash('sha256').update(await readFile(source + '/' + file)).digest('hex') + '  ' + file);
+          }
+          await writeFile('release-artifacts/SHA256SUMS.txt', checksums.join('\n') + '\n');
+          NODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ZCode-Codex-${{ matrix.os }}-${{ matrix.arch }}-${{ github.sha }}
+          path: release-artifacts/*
+          if-no-files-found: error
+          retention-days: 14

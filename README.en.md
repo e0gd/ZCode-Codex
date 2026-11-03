@@ -1,4 +1,4 @@
-# ZCode
+# ZCode-Codex
 
 <div align="center">
   <img src="public/logo/icons/1024x1024.png" alt="ZCode" width="128" height="128" />
@@ -11,12 +11,35 @@
   <a href="README.md">简体中文</a> | English
 </p>
 
-ZCode is an AI coding workspace with desktop, browser, and terminal interfaces. This repository contains the clients, backend services, shared UI, and Agent CLI and runtime source code.
+ZCode-Codex is a dual-engine AI coding workspace based on [ZCode](https://github.com/zai-org/ZCode). It retains ZCode and integrates the separately installed official Codex CLI. This repository includes the desktop client, Web interface, shared UI and Agent CLI source.
 
-This fork's `native-codex` branch offers two project engines. New projects default to ZCode; choose Codex at creation to fix the engine for that project's sessions. Existing projects default to ZCode. Install Codex separately; it uses ZCode's API configuration, currently OpenAI Responses with an API key, without workspace environment variables. Controlled source-desktop checks passed same-directory projects, actual routing to both engines, and recovery of both session types after a full process restart. The standard development build passed, but isolated startup stalled in ARMS initialization, so acceptance used the same build launched directly with Electron. Full CLI tests still have failures; live-provider, phone, and installation/packaging acceptance remain open. See [the branch notes and validation record](NATIVE_CODEX.md).
+The development branch is `native-codex`; `main` preserves the upstream baseline. New projects default to ZCode; choosing Codex at creation fixes that project's sessions to Codex. Existing projects default to ZCode. Codex uses the provider and model configured in ZCode, currently OpenAI Responses with an API key, without per-project environment variables.
+
+- Codex text and image inputs use the existing chat and attachment paths.
+- Structured questions display choices or a free-text field and wait for an explicit answer.
+- Native child agents appear in the existing status rows, composer robot button, background list and read-only child-session view.
+- Settings → Agent capabilities → Subagents controls automatic Codex delegation, off by default. Connected Web sessions use the saved setting on the next turn.
+- Desktop and connected Web/mobile clients share the executing desktop's sessions. Updating the desktop does not replace the official hosted frontend or add its new controls.
+
+See [usage and limitations](NATIVE_CODEX.md) and [validation evidence](docs/testing/native-codex-validation.md). This community fork is maintained separately from upstream ZCode and official OpenAI releases.
+
+## Installation and platforms
+
+Install the [official Codex CLI](https://github.com/openai/codex) separately, configure a compatible provider and model in ZCode, then select **Execution engine → Codex** when creating a project. Projects using ZCode do not require Codex.
+
+| Platform | Source packaging targets | Formats | Branch validation |
+| --- | --- | --- | --- |
+| Windows | x64, arm64 | `.exe` installer | Complete x64 portable directory built and locally installed; installer flow awaits acceptance |
+| macOS | Apple Silicon arm64, Intel x64 | `.dmg`, `.zip` | Build entry available; branch packages and runtime await validation |
+| Linux | x64, arm64 | `.AppImage`, `.deb`, `.rpm`, `.pkg.tar.zst` | Build entry available; branch packages and runtime await validation |
+
+Download the actual attachments in this fork's [Releases](https://github.com/e0gd/ZCode-Codex/releases). No attachments means no published package; upstream installers do not contain this integration. Source commands appear below under Packaging. Codex is not bundled. To build a Preview application alongside the original while using the production backend, set `ZCODE_ENV=production` and `ZCODE_PREVIEW_IDENTITY=1`. Renaming the repository does not migrate application data or change an existing local installation's independent data.
+
+Use [Actions → Desktop packages](https://github.com/e0gd/ZCode-Codex/actions/workflows/desktop-packages.yml) to manually build Windows x64, macOS arm64/x64 and Linux x64. Successful jobs provide installers and SHA256 manifests as run artifacts. Availability depends on actual job results; see [build and download instructions](docs/testing/desktop-packages.md).
 
 ## Updates
 
+- **2026-11-03**: Project engines, images, structured questions, automatic delegation setting and native child-agent visibility; fixed Host rejection of free-text questions.
 - **2026-10-30**: Updated to ZCode v3.17.1.
 - 2026-10-19: Updated to ZCode v3.16.2.
 - 2026-10-16: Updated to ZCode v3.16.1.
@@ -154,6 +177,11 @@ pnpm bundle:desktop
 
 # Set the target platform and CPU architecture
 pnpm bundle:desktop -- --os win --arch x64
+
+pnpm bundle:desktop -- --os mac --arch arm64
+pnpm bundle:desktop -- --os mac --arch x64
+pnpm bundle:desktop -- --os linux --arch x64
+pnpm bundle:desktop -- --os linux --arch arm64
 
 pnpm bundle:desktop -- --help
 ```
