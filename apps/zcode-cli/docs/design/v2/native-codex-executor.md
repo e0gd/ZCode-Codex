@@ -97,6 +97,21 @@ A published request has exactly one resolved event, including denial, cancellati
 
 Core failure diagnostics emit `native_codex.turn.failed` with session/input/trace/turn identity, captured mode/Plan and safe error metadata. Unsupported interactions and final-text mismatches carry stable `NATIVE_CODEX_UNSUPPORTED_INTERACTION` / `NATIVE_CODEX_FINAL_TEXT_MISMATCH` codes and fixed human messages; unknown causes use a fixed generic diagnostic while preserving the original thrown error. Never log raw provider error messages, prompts, commands, keys, or tool outputs. These diagnostics distinguish known failure categories without claiming to fix unknown runtime stops.
 
+### Response stream failure diagnostics (2026-11-03)
+
+For the active parent thread/turn only, terminal `error` notifications and failed `turn/completed` use the same safe classifier. An exact single-key `codexErrorInfo` object with `responseStreamConnectionFailed`, `responseStreamDisconnected`, or `responseTooManyFailedAttempts` produces `NATIVE_CODEX_RESPONSE_STREAM_FAILED` with the fixed message `Official Codex could not complete the response stream. Check the API provider and network before sending again.` An optional integer HTTP status in 100–599 may be attached as `httpStatusCode` and appended to the message. Malformed/unknown categories retain the existing generic message; arbitrary strings, provider messages and additional details are never surfaced or logged. Core diagnostics allow only the fixed category and validated HTTP status, preserving the original safe error for the existing TurnError projections.
+
+`willRetry: true` remains nonterminal. A stream EOF without `response.completed` must never become success, trigger a second ZCode retry, switch providers or replay an accepted input. Partial text/tool cleanup and the existing desktop-continuous / web-remote-replayable terminal event owner are unchanged. Regression covers all three allowlisted variants, terminal notifications and failed completion, invalid category/status, sensitive fields, retry followed by success, stale thread/turn exclusion and safe Core logging. A successful later smoke test does not retroactively establish recovery of the original failed conversation.
+
+Codex 0.166.0 reports a classified stream error during retry, but may emit only `codexErrorInfo: "other"` when retrying is exhausted. The adapter owns one transient last-retry classification for the active parent turn, storing only the safe Error above. Each active retry replaces it (a nonstream retry clears it); every new turn clears it. Only an exact terminal `"other"` may reuse that latest classification. Missing, unknown or more specific terminal categories do not reuse it, and stale/foreign/child notifications cannot change it. Nothing is persisted as a retry queue or used to resend input.
+
+```text
+active parent retry error -> safe allowlist -> replace last-retry classification
+  -> official retry (no ZCode dispatch)
+  -> terminal "other" -> use last safe classification -> existing Core TurnError
+new turn -> clear classification; stale/foreign/child -> no change
+```
+
 Initial acceptance covers exact-workspace isolation, no ZCode modelFactory calls, thread reuse, explicit denial, cancellation, event order, cold tool/text persistence, no fallback after errors and consistent live/replay output. Images and structured user questions are supported as specified below; other unsupported media and interactions fail explicitly. Native guide input is not consumed by a ZCode loop. Session forks, rewind and project-memory/model side jobs require separate native capability integration before being represented as supported.
 
 ## Native automatic-compaction notifications (2026-11-02)

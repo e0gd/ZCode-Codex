@@ -337,6 +337,193 @@ describe("project Codex discovery", () => {
 });
 
 describe("native Codex transport", () => {
+  describe("safe response stream failures", () => {
+    const safeMessage = "Official Codex could not complete the response stream. Check the API provider and network before sending again.";
+    const terminalMethods = ["error", "turn/completed"] as const;
+    const variants = ["responseStreamConnectionFailed", "responseStreamDisconnected", "responseTooManyFailedAttempts"] as const;
+    const terminal = (emit: (message: Message) => void, method: typeof terminalMethods[number], error: unknown) => {
+      emit(method === "error"
+        ? { method, params: { ...activeParams, willRetry: false, error } }
+        : { method, params: { threadId: "thread-1", turn: { id: "turn-1", status: "failed", error } } });
+    };
+
+    it.each(variants.flatMap(variant => terminalMethods.map(method => ({ variant, method }))))("classifies $variant from $method without exposing provider details or replaying", async ({ variant, method }) => {
+      const remote = server((m, emit) => {
+        if (m.method !== "turn/start") return false;
+        emit({ id: m.id, result: { turn: { id: "turn-1" } } });
+        terminal(emit, method, { message: "Bearer secret-key", additionalDetails: "private-provider-details", codexErrorInfo: { [variant]: { httpStatusCode: 502, private: "private-provider-details" } } });
+        return true;
+      });
+      const { executor } = await fixture();
+      const failure = await executor.execute(input()).then(() => undefined, error => error as Error);
+      expect(failure).toMatchObject({ code: "NATIVE_CODEX_RESPONSE_STREAM_FAILED", httpStatusCode: 502, message: `${safeMessage} (HTTP 502)` });
+      expect(String(failure) + JSON.stringify(failure)).not.toMatch(/secret-key|private-provider-details/);
+      await expect(executor.execute(input())).rejects.toThrow("will not be replayed");
+      expect(remote.calls.filter(m => m.method === "turn/start")).toHaveLength(1);
+    });
+
+    it.each([100, 599, 99, 600, 502.5, "502", null, undefined])("validates HTTP status %s independently of the category", async httpStatusCode => {
+      server((m, emit) => {
+        if (m.method !== "turn/start") return false;
+        emit({ id: m.id, result: { turn: { id: "turn-1" } } });
+        terminal(emit, "error", { message: "secret-key", codexErrorInfo: { responseStreamDisconnected: { httpStatusCode } } });
+        return true;
+      });
+      const { executor } = await fixture();
+      const failure = await executor.execute(input()).then(() => undefined, error => error as Error);
+      expect(failure).toMatchObject({ code: "NATIVE_CODEX_RESPONSE_STREAM_FAILED" });
+      if (httpStatusCode === 100 || httpStatusCode === 599) {
+        expect(failure).toMatchObject({ httpStatusCode, message: `${safeMessage} (HTTP ${httpStatusCode})` });
+      } else {
+        expect(failure).not.toHaveProperty("httpStatusCode");
+        expect(failure?.message).toBe(safeMessage);
+      }
+    });
+
+    it.each(terminalMethods)("keeps malformed or unknown categories generic for %s", async method => {
+      const categories: unknown[] = [undefined, null, "responseStreamDisconnected", [], { other: { httpStatusCode: 502 } }, { responseStreamDisconnected: { httpStatusCode: 502 }, other: {} }];
+      let nextCategory = 0;
+      const remote = server((m, emit) => {
+        if (m.method !== "turn/start") return false;
+        emit({ id: m.id, result: { turn: { id: "turn-1" } } });
+        terminal(emit, method, { message: "secret-key", additionalDetails: "private-provider-details", codexErrorInfo: categories[nextCategory++] });
+        return true;
+      });
+      const { executor } = await fixture();
+      for (let index = 0; index < categories.length; index++) {
+        const failure = await executor.execute(input({ inputId: `invalid-category-${index}` })).then(() => undefined, error => error as Error);
+        expect(failure?.message).toBe(method === "error" ? "Official Codex reported a turn error." : "Official Codex turn failed. Inspect its thread before submitting another input.");
+        expect(failure).not.toHaveProperty("httpStatusCode");
+        expect(failure).not.toHaveProperty("code", "NATIVE_CODEX_RESPONSE_STREAM_FAILED");
+        expect(String(failure) + JSON.stringify(failure)).not.toMatch(/secret-key|private-provider-details/);
+      }
+      expect(remote.calls.filter(m => m.method === "turn/start")).toHaveLength(categories.length);
+    });
+
+    it.each(terminalMethods.flatMap(method => [null, 502].map(httpStatusCode => ({ method, httpStatusCode }))))("inherits only the latest structured retry for terminal other via $method (HTTP $httpStatusCode)", async ({ method, httpStatusCode }) => {
+      const remote = server((m, emit) => {
+        if (m.method !== "turn/start") return false;
+        emit({ id: m.id, result: { turn: { id: "turn-1" } } });
+        for (const status of [503, httpStatusCode]) emit({ method: "error", params: { ...activeParams, willRetry: true,
+          error: { message: "secret retry detail", codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: status } } } } });
+        terminal(emit, method, { message: "secret final detail", additionalDetails: "private-provider-details", codexErrorInfo: "other" });
+        return true;
+      });
+      const { executor } = await fixture();
+      const failure = await executor.execute(input()).then(() => undefined, error => error as Error);
+      expect(failure).toMatchObject({ code: "NATIVE_CODEX_RESPONSE_STREAM_FAILED", message: httpStatusCode === null ? safeMessage : `${safeMessage} (HTTP 502)` });
+      if (httpStatusCode === null) expect(failure).not.toHaveProperty("httpStatusCode");
+      else expect(failure).toHaveProperty("httpStatusCode", 502);
+      expect(String(failure) + JSON.stringify(failure)).not.toMatch(/secret|private-provider-details/);
+      expect(remote.calls.filter(m => m.method === "turn/start")).toHaveLength(1);
+    });
+
+    it.each(terminalMethods)("does not inherit retry diagnostics for non-other or missing terminal categories via %s", async method => {
+      const categories: unknown[] = ["badRequest", "futureUnknownCategory", undefined, null, {}, { other: {} }];
+      let category = 0;
+      server((m, emit) => {
+        if (m.method !== "turn/start") return false;
+        emit({ id: m.id, result: { turn: { id: "turn-1" } } });
+        emit({ method: "error", params: { ...activeParams, willRetry: true, error: { codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 502 } } } } });
+        terminal(emit, method, { message: "secret-key", codexErrorInfo: categories[category++] });
+        return true;
+      });
+      const { executor } = await fixture();
+      for (let index = 0; index < categories.length; index++) {
+        const failure = await executor.execute(input({ inputId: `non-other-${index}` })).then(() => undefined, error => error as Error);
+        expect(failure?.message).toBe(method === "error" ? "Official Codex reported a turn error." : "Official Codex turn failed. Inspect its thread before submitting another input.");
+        expect(failure).not.toHaveProperty("code", "NATIVE_CODEX_RESPONSE_STREAM_FAILED");
+        expect(failure).not.toHaveProperty("httpStatusCode");
+      }
+    });
+
+    it.each(terminalMethods)("clears a previous stream retry when the latest retry is not structured stream failure via %s", async method => {
+      const categories: unknown[] = ["badRequest", "other", undefined, { responseStreamDisconnected: {}, other: {} }];
+      let category = 0;
+      server((m, emit) => {
+        if (m.method !== "turn/start") return false;
+        emit({ id: m.id, result: { turn: { id: "turn-1" } } });
+        for (const codexErrorInfo of [{ responseStreamDisconnected: { httpStatusCode: 502 } }, categories[category++]]) {
+          emit({ method: "error", params: { ...activeParams, willRetry: true, error: { codexErrorInfo } } });
+        }
+        terminal(emit, method, { message: "secret-key", codexErrorInfo: "other" });
+        return true;
+      });
+      const { executor } = await fixture();
+      for (let index = 0; index < categories.length; index++) {
+        const failure = await executor.execute(input({ inputId: `latest-retry-${index}` })).then(() => undefined, error => error as Error);
+        expect(failure).not.toHaveProperty("code", "NATIVE_CODEX_RESPONSE_STREAM_FAILED");
+        expect(failure).not.toHaveProperty("httpStatusCode");
+      }
+    });
+
+    it.each([false, true])("does not let stale or foreign retry notifications seed or overwrite active retry diagnostics (seeded: %s)", async seeded => {
+      server((m, emit) => {
+        if (m.method !== "turn/start") return false;
+        emit({ id: m.id, result: { turn: { id: "turn-1" } } });
+        const retry = (params: Record<string, unknown>, codexErrorInfo: unknown) => emit({ method: "error", params: { ...params, willRetry: true, error: { codexErrorInfo } } });
+        if (seeded) retry(activeParams, { responseStreamDisconnected: { httpStatusCode: 502 } });
+        for (const params of [{ ...activeParams, turnId: "stale-turn" }, { ...activeParams, threadId: "foreign-thread" }]) {
+          retry(params, { responseStreamDisconnected: { httpStatusCode: 504 } });
+          retry(params, "badRequest");
+        }
+        terminal(emit, "error", { codexErrorInfo: "other" });
+        return true;
+      });
+      const { executor } = await fixture();
+      const failure = await executor.execute(input()).then(() => undefined, error => error as Error);
+      if (seeded) expect(failure).toMatchObject({ code: "NATIVE_CODEX_RESPONSE_STREAM_FAILED", httpStatusCode: 502 });
+      else {
+        expect(failure?.message).toBe("Official Codex reported a turn error.");
+        expect(failure).not.toHaveProperty("httpStatusCode");
+      }
+    });
+
+    it.each([false, true])("clears retry diagnostics before a subsequent turn (async question continuation: %s)", async asyncContinuation => {
+      let turns = 0;
+      const remote = server((m, emit) => {
+        if (m.method !== "turn/start") return false;
+        const turnId = `turn-${++turns}`;
+        emit({ id: m.id, result: { turn: { id: turnId } } });
+        if (turns === 1) {
+          emit({ method: "error", params: { ...activeParams, willRetry: true, error: { codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 502 } } } } });
+          if (asyncContinuation) emit({ method: "item/completed", params: { ...activeParams, item: { type: "agentMessage", id: "question", text: "Choose", questions: [{ title: "Continue?", options: ["Yes", "No"] }] } } });
+          emit({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: turnId, status: "completed" } } });
+        } else emit({ method: "error", params: { threadId: "thread-1", turnId, willRetry: false, error: { codexErrorInfo: "other" } } });
+        return true;
+      });
+      const { executor } = await fixture();
+      const request = input({ requestUserInput: vi.fn(async () => ({ "Continue?": "Yes" })) });
+      if (!asyncContinuation) await executor.execute(request);
+      const failure = await executor.execute(asyncContinuation ? request : input({ inputId: "second-turn" })).then(() => undefined, error => error as Error);
+      expect(failure?.message).toBe("Official Codex reported a turn error.");
+      expect(failure).not.toHaveProperty("code", "NATIVE_CODEX_RESPONSE_STREAM_FAILED");
+      expect(failure).not.toHaveProperty("httpStatusCode");
+      expect(remote.calls.filter(m => m.method === "turn/start")).toHaveLength(2);
+      expect(remote.calls.filter(m => m.method === "thread/start")).toHaveLength(1);
+    });
+
+    it("ignores retrying and stale errors before a successful completion", async () => {
+      const remote = server((m, emit) => {
+        if (m.method !== "turn/start") return false;
+        emit({ id: m.id, result: { turn: { id: "turn-1" } } });
+        const error = { message: "secret-key", codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 502 } } };
+        emit({ method: "error", params: { ...activeParams, willRetry: true, error } });
+        emit({ method: "error", params: { ...activeParams, threadId: "foreign-thread", willRetry: false, error } });
+        emit({ method: "error", params: { ...activeParams, turnId: "stale-turn", willRetry: false, error } });
+        emit({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "stale-turn", status: "failed", error } } });
+        emit({ method: "item/completed", params: { ...activeParams, item: { type: "agentMessage", id: "recovered", text: "completed after native retry" } } });
+        emit({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed" } } });
+        return true;
+      });
+      const { executor } = await fixture(); const request = input();
+      await expect(executor.execute(request)).resolves.toMatchObject({ text: "completed after native retry", threadId: "thread-1" });
+      expect(remote.calls.filter(m => m.method === "turn/start")).toHaveLength(1);
+      expect(mock.spawn).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(vi.mocked(request.onEvent).mock.calls)).not.toContain("secret-key");
+    });
+  });
+
   it("forwards compact item identity and lifecycle without adapter-owned dedupe", async () => {
     server((m, emit) => {
       if (m.method !== "turn/start") return false;

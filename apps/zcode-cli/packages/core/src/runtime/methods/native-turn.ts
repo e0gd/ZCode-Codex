@@ -395,8 +395,14 @@ export async function executeNativeTurn(
     const safeMessages: Record<string, string> = {
       NATIVE_CODEX_UNSUPPORTED_INTERACTION: "Codex requested an unsupported interaction. No permission was granted.",
       NATIVE_CODEX_FINAL_TEXT_MISMATCH: "Native final text disagrees with streamed text.",
+      NATIVE_CODEX_RESPONSE_STREAM_FAILED: "Official Codex could not complete the response stream. Check the API provider and network before sending again.",
     };
     const safeCode = typeof code === "string" && Object.hasOwn(safeMessages, code) ? code : "NATIVE_CODEX_TURN_FAILED";
+    // 仅接收已分类断流错误的合法 HTTP 状态；不能把任意第三方字段带入诊断。
+    const status = error instanceof Error && "httpStatusCode" in error ? error.httpStatusCode : undefined;
+    const minimumHttpStatus = 100;
+    const maximumHttpStatus = 599;
+    const httpStatusCode = safeCode === "NATIVE_CODEX_RESPONSE_STREAM_FAILED" && typeof status === "number" && Number.isInteger(status) && status >= minimumHttpStatus && status <= maximumHttpStatus ? status : undefined;
     this.logger?.warn("native_codex.turn.failed", {
       sessionId: this.sessionId,
       inputId: input.inputId,
@@ -408,6 +414,7 @@ export async function executeNativeTurn(
         name: input.signal.aborted ? "AbortError" : "Error",
         code: safeCode,
         message: safeMessages[safeCode] ?? "Native Codex turn failed; original cause is preserved for the caller.",
+        ...(httpStatusCode === undefined ? {} : { httpStatusCode }),
       },
     });
     // 连接失败可先于 onEvent 落盘结束；先排空已接收通知，避免 failed 后又追加 started。

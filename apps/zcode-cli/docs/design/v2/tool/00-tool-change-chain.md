@@ -1,5 +1,9 @@
 # Tool Change Chain Spec
 
+## Native Codex response stream failures (2026-11-03)
+
+Active parent thread/turn error → adapter allowlist classification → existing Core TurnError and pending tool/partial-text cleanup → existing desktop continuous/mobile replayable terminal projections. Only known structured response-stream categories and a validated HTTP status are exposed; raw provider details remain excluded. Retrying notifications keep the official execution alive. No replacement model loop, replay, provider fallback, synthetic completion or tool schema/permission change is introduced. See [response stream failure diagnostics](../native-codex-executor.md#response-stream-failure-diagnostics-2026-11-03) for regression requirements.
+
 ## Native Codex automatic-compaction notification bridge (2026-11-02)
 
 Official active-turn `contextCompaction` item started/completed observations cross the native port with thread/turn/item identity. Core alone deduplicates and persists one monotone lifecycle per tuple on the existing native assistant, closes preceding text before inserting the marker, and publishes existing `CompactStarted`/`CompactCompleted`/`CompactFailed` events (auto, mid_turn, separator). Missing native token counts, summaries and coverage are omitted. Pending operations terminate failed/interrupted on errors, cancellation or missing item completion; cold recovery preserves assistant/model identity. Duplicate and deprecated `thread/compacted` notifications never synthesize success. Existing desktop continuous/mobile replayable compact markers are reused, without manual compact routing, a second loop, UI changes or extra turns. Full contract and acceptance cases are in [Native Codex executor](../native-codex-executor.md#native-automatic-compaction-notifications-2026-11-02).

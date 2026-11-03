@@ -918,7 +918,7 @@ describe("native turn execution", () => {
     expect(modelFactory).not.toHaveBeenCalled();
   });
 
-  it.each([undefined, "NATIVE_CODEX_UNSUPPORTED_INTERACTION", "NATIVE_CODEX_FINAL_TEXT_MISMATCH"])("logs safe structured failure diagnostics (%s)", async code => {
+  it.each([undefined, "NATIVE_CODEX_UNSUPPORTED_INTERACTION", "NATIVE_CODEX_FINAL_TEXT_MISMATCH", "NATIVE_CODEX_RESPONSE_STREAM_FAILED"])("logs safe structured failure diagnostics (%s)", async code => {
     const warn = vi.fn();
     const logger = { warn, debug: vi.fn(), info: vi.fn(), error: vi.fn(), child: vi.fn() };
     logger.child.mockReturnValue(logger);
@@ -932,6 +932,27 @@ describe("native turn execution", () => {
     const diagnostic = warn.mock.calls.find(([event]) => event === "native_codex.turn.failed");
     expect(JSON.stringify(diagnostic)).not.toContain("secret-key");
     expect(JSON.stringify(diagnostic)).not.toContain("private user input");
+  });
+
+  it.each([100, 502, 599, 99, 600, 502.5, "502", null, undefined])("logs only validated response stream status %s with a fixed safe message", async httpStatusCode => {
+    const warn = vi.fn();
+    const logger = { warn, debug: vi.fn(), info: vi.fn(), error: vi.fn(), child: vi.fn() };
+    logger.child.mockReturnValue(logger);
+    const failure = Object.assign(new Error("secret-key and raw provider response"), {
+      code: "NATIVE_CODEX_RESPONSE_STREAM_FAILED", httpStatusCode, additionalDetails: "private-provider-details",
+    });
+    const { runtime, modelFactory } = fixture({ execute: async () => { throw failure; } }, { logger });
+    await expect(runtime.executeTurn("private user input")).rejects.toBeDefined();
+    const diagnostic = warn.mock.calls.find(([event]) => event === "native_codex.turn.failed")?.[1];
+    expect(diagnostic?.error).toMatchObject({
+      code: "NATIVE_CODEX_RESPONSE_STREAM_FAILED",
+      message: "Official Codex could not complete the response stream. Check the API provider and network before sending again.",
+    });
+    if (httpStatusCode === 100 || httpStatusCode === 502 || httpStatusCode === 599) {
+      expect(diagnostic?.error).toHaveProperty("httpStatusCode", httpStatusCode);
+    } else expect(diagnostic?.error).not.toHaveProperty("httpStatusCode");
+    expect(JSON.stringify(diagnostic)).not.toMatch(/secret-key|raw provider response|private-provider-details|private user input/);
+    expect(modelFactory).not.toHaveBeenCalled();
   });
 
   it("propagates native failure without falling back to the model", async () => {

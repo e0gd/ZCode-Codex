@@ -32,6 +32,30 @@ const invalidRequestCode = -32600;
 const invalidParamsCode = -32602;
 const approvalFailureCode = -32603;
 const nativeEfforts = new Set<NativeCodexReasoningEffort>(["none", "minimal", "low", "medium", "high", "xhigh"]);
+const nativeStreamFailureKinds = new Set(["responseStreamConnectionFailed", "responseStreamDisconnected", "responseTooManyFailedAttempts"]);
+const minimumHttpStatus = 100;
+const maximumHttpStatus = 599;
+
+function nativeTurnError(value: unknown, fallbackMessage: string, lastRetryStreamError?: Error): Error {
+  const category = record(value).codexErrorInfo;
+  // 0.166 重试耗尽时只发 other；保留本轮最后一次明确的安全分类，不能跨轮或覆盖更具体错误。
+  if (category === "other" && lastRetryStreamError) return lastRetryStreamError;
+  const info = record(category);
+  const keys = Object.keys(info);
+  const kind = keys[0];
+  const details = kind === undefined ? undefined : info[kind];
+  if (keys.length !== 1 || kind === undefined || !nativeStreamFailureKinds.has(kind) || details === null || typeof details !== "object" || Array.isArray(details)) {
+    return new Error(fallbackMessage);
+  }
+  // 官方结构化错误可安全分类；原始 message/additionalDetails 可能含凭据，不能直接展示或落盘。
+  const status = record(details).httpStatusCode;
+  const httpStatusCode = typeof status === "number" && Number.isInteger(status) && status >= minimumHttpStatus && status <= maximumHttpStatus ? status : undefined;
+  const message = "Official Codex could not complete the response stream. Check the API provider and network before sending again.";
+  return Object.assign(new Error(message + (httpStatusCode === undefined ? "" : ` (HTTP ${httpStatusCode})`)), {
+    code: "NATIVE_CODEX_RESPONSE_STREAM_FAILED",
+    ...(httpStatusCode === undefined ? {} : { httpStatusCode }),
+  });
+}
 
 function nativeUserInput(input: ExecuteInput): Array<Record<string, unknown>> {
   const items: Array<Record<string, unknown>> = [];
@@ -184,6 +208,7 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
     const permission = nativePermission(input.permission);
     let threadId = "";
     let turnId = "";
+    let lastRetryStreamError: Error | undefined;
     let text = "";
     let toolCallCount = 0;
     let finished = false;
@@ -371,7 +396,7 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       } else if (message.method === "turn/completed") {
         const turn = record(p.turn);
         if (turn.status === "interrupted" || input.signal.aborted) throw abortError();
-        if (turn.status !== "completed") throw new Error("Official Codex turn failed. Inspect its thread before submitting another input.");
+        if (turn.status !== "completed") throw nativeTurnError(turn.error, "Official Codex turn failed. Inspect its thread before submitting another input.", lastRetryStreamError);
         if (continuationAnswers.length) {
           // 异步问题没有反向 RPC；仅在旧 turn 完成后把真实答案送入同一 thread，绝不重放原输入。
           const answers = continuationAnswers.splice(0);
@@ -380,8 +405,11 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
         }
         // 父轮完成不代表子轮结束；提前 close 会杀死仍在后台运行的原生 child。
         parentCompleted = true; finishIfIdle();
-      } else if (message.method === "error" && p.willRetry !== true) {
-        throw new Error("Official Codex reported a turn error.");
+      } else if (message.method === "error") {
+        const error = nativeTurnError(p.error, "Official Codex reported a turn error.", p.willRetry === true ? undefined : lastRetryStreamError);
+        if (p.willRetry === true) {
+          lastRetryStreamError = "code" in error && error.code === "NATIVE_CODEX_RESPONSE_STREAM_FAILED" ? error : undefined;
+        } else throw error;
       }
     };
     const enqueue = (message: RpcMessage) => {
@@ -493,6 +521,7 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       input.signal.throwIfAborted();
       const startTurn = async (items: Array<Record<string, unknown>>) => {
         input.signal.throwIfAborted();
+        lastRetryStreamError = undefined;
         starting = true;
         const started = record(await connection!.request("turn/start", { threadId, model, ...(resolvedModel ? { effort: effort ?? null } : {}), approvalPolicy: permission.approvalPolicy, sandboxPolicy: permission.sandboxPolicy, additionalContext, input: items }));
         turnId = identifier(record(started.turn).id);
