@@ -270,7 +270,8 @@ function lastChildOutcome(messages: readonly MessageWithParts[] | undefined): {
       : // Bug 根因：assistant 发出 tool call 后，该 model step 也会写 completed/finish；
         // 但 child session 仍在执行 Bash 等工具，不能把“本轮结束”当成“子会话终态”。
         // 只有不含 tool part 的最终 assistant message 才能提供成功 outcome。
-        !hasToolRound && (last.info.time.completed || last.info.finish)
+        // 原生桥每个 child turn 只写一条 assistant，completed 代表整轮终态，允许同条包含工具。
+        (!hasToolRound || last.info.metadata?.executionBackend === "codex") && (last.info.time.completed || last.info.finish)
         ? { status: "success" }
         : {}),
   };
@@ -301,6 +302,15 @@ function runningStatus(input: {
   }
   if (input.childProjection?.status === "waiting") return "waiting";
   if (input.childProjection?.status === "running") return "running";
+  // 原生子进程随执行宿主退出；冷恢复不能沿用 launch ACK，把已丢失的 child 永久显示为运行中。
+  // live 的父 runtime 会一直保持 running，直到它观测的原生 child 全部结束。
+  if (
+    input.candidate.part.state.input.executionBackend === "codex" &&
+    input.childProjection === undefined &&
+    input.childOutcome.status === undefined &&
+    input.parentProjection &&
+    input.parentProjection.status !== "running" && input.parentProjection.status !== "waiting"
+  ) return undefined;
   // async Agent 的父 tool part 在 launch ACK 后立即标成 completed，
   // partial parent projection 又可能暂时不带仍运行的 background task。此时仅按
   // tool part 会把 child 误判为 ended，并在 cold seed 时清空 V4 running 行。

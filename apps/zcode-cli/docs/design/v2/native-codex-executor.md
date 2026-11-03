@@ -183,4 +183,21 @@ Regression evidence includes option and custom-text submission, multiple questio
 
 ## Validation
 
+### Native child observation
+
+Native Codex owns child execution. The adapter translates `collabAgentToolCall` spawn identities and child-thread notifications; Core owns durable `subagent_child` session records, transcript parts and standard SubagentSpawned/Message/Stopped facts. The existing V4 projection, composer robot trigger, background directory and read-only child pane consume these facts. No ZCode model loop or second child executor is created. Native spawn tools use the existing `Agent` presentation and exact parentToolCallId pairing.
+
+```text
+Codex spawn item -> Core persists child identity -> standard SubagentSpawned
+child thread items -> Core child transcript + sequenced child events -> existing child topic
+child terminal -> persist final child transcript -> SubagentStopped -> running list updates
+desktop continuous / mobile replayable -> same session store and V4 projection
+```
+
+Child thread IDs are mapped deterministically within the parent session, with persisted native relations for later follow-up turns. Only children observed through a trusted spawn relation may produce child events; unrelated thread and stale parent-turn notifications are ignored. Per-child native turn/item identity deduplicates notifications. A new child turn reopens the same child session without changing its original spawn tool anchor. Nested children retain their actual parent relation.
+
+The per-execution native process remains alive until the parent and its observed running children finish. A parent terminal must not kill still-running children. Cancellation interrupts all observed running native turns before closing the connection. Failures and cancellation settle every open child explicitly; no unfinished child is reported as success. Process restart restores persisted child transcripts and ended-directory entries; it does not restart child work. A partial native child without an active parent/child runtime is `lost`, not permanently running. Native child rows expose observation only; do not advertise ZCode's background-task cancel control for an engine it does not own. Child-only approval/questions currently fail closed (decline/no answers); the existing parent question and permission broker remains unchanged.
+
+Regression evidence must cover parallel spawn, real-time child text and tools, child-first and parent-first completion, nested relationships, follow-up reuse, failed spawn, duplicates, foreign-thread exclusion, cancellation, cold recovery, both V4 client modes, and actual robot-button/directory/detail clicks at desktop and mobile widths. Real-binary acceptance uses an isolated local Responses fixture and no paid inference.
+
 The staged helper execution tests cover stream/final agreement, final-only output, tool persistence, deny/modify decisions and cancellation. Core Vitest regression cases exercise the actual runtime with a modelFactory that throws if called. Missing source packages or dependency declarations must be reported separately from a verified full CLI typecheck. Before release run CLI typecheck/lint, affected Core/adapter tests, architecture checks, and desktop plus mobile replay/approval/cancellation acceptance.

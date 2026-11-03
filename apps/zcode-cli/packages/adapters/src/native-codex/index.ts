@@ -6,7 +6,7 @@ import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ModelSelection, NativeCodexModelConfig, NativeCodexModelResolver, NativeCodexReasoningEffort, NativeTurnApproval, NativeTurnEvent, NativeTurnExecutor } from "@zcode/contracts";
 import type { Provider, ProviderModel } from "@zcode/provider";
 import { compileModelOptionMap } from "@zcode/model-option-map";
-import { CodexConnection, identifier, record, type RpcMessage } from "./connection.js";
+import { CodexConnection, NativeChildObserver, nativeToolName, nativeToolInput, nativeToolOutput, identifier, record, type NativeChildRelation, type RpcMessage } from "./connection.js";
 import { ASK_USER_QUESTION_TOOL_NAME, NativeAskUserQuestionInputSchema, detectImageMediaType, normalizeImageMediaType, parseImageDataUrl } from "@zcode/contracts";
 
 type ExecuteInput = Parameters<NativeTurnExecutor["execute"]>[0];
@@ -187,6 +187,7 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
     let text = "";
     let toolCallCount = 0;
     let finished = false;
+    let parentCompleted = false;
     let starting = false;
     let sequence = Promise.resolve();
     const buffered: RpcMessage[] = [];
@@ -208,6 +209,10 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
     const emit = async (event: NativeTurnEvent) => {
       if (finished || input.signal.aborted) return;
       await input.onEvent(event);
+    };
+    const children = new NativeChildObserver(emit, input.sessionId);
+    const finishIfIdle = () => {
+      if (parentCompleted && !children.running && !finished) { finished = true; complete(); }
     };
     const startText = async (itemId: string) => {
       if (messages.has(itemId)) return;
@@ -239,6 +244,14 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       if (finished) return;
       const p = message.params;
       if (message.id !== undefined) {
+        if (children.children.has(String(p.threadId))) {
+          // 原生 child 的审批尚未进入父会话 broker；明确拒绝，不扩大权限也不误杀整个父轮。
+          if (message.method === "item/commandExecution/requestApproval" || message.method === "item/fileChange/requestApproval") {
+            connection?.send({ id: message.id, result: { decision: "decline" } });
+          } else if (message.method === "item/tool/requestUserInput") connection?.send({ id: message.id, result: { answers: {} } });
+          else connection?.send({ id: message.id, error: { code: -32601, message: "Unsupported native child interaction." } });
+          return;
+        }
         if (p.threadId !== threadId || p.turnId !== turnId || input.signal.aborted) {
           const error = new Error("Codex approval request does not belong to the active turn. No permission was granted.");
           connection?.send({ id: message.id, error: { code: invalidRequestCode, message: error.message } });
@@ -288,6 +301,17 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
         }
         return;
       }
+      const isChild = children.children.has(String(p.threadId));
+      if (isChild && (message.method === "item/started" || message.method === "item/completed")) {
+        await children.notification(message);
+        if (await children.collaboration(record(p.item), String(p.threadId))) {
+          await atomicWrite(join(directory, "subagents.json"), { version: 1, threadId, children: children.relations() });
+        }
+      }
+      if (isChild) {
+        if (message.method !== "item/started" && message.method !== "item/completed") await children.notification(message);
+        finishIfIdle(); return;
+      }
       if (p.threadId !== threadId) return;
       const incomingTurn = typeof p.turnId === "string" ? p.turnId : record(p.turn).id;
       if (incomingTurn !== turnId) return;
@@ -332,11 +356,14 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
             }
           }
         } else if (typeof item.type === "string" && toolTypes.has(item.type)) {
-          const name = item.type === "commandExecution" ? "Bash" : item.type === "fileChange" ? "Edit" : typeof item.tool === "string" ? item.tool : item.type;
-          await startTool(toolIdentifier(id), name, item);
+          const name = nativeToolName(item);
+          await startTool(toolIdentifier(id), name, nativeToolInput(item));
+          if (await children.collaboration(item)) {
+            await atomicWrite(join(directory, "subagents.json"), { version: 1, threadId, children: children.relations() });
+          }
           if (message.method === "item/completed" && !completedTools.has(id)) {
             completedTools.add(id);
-            const output = typeof item.aggregatedOutput === "string" ? item.aggregatedOutput : JSON.stringify(item.result ?? item.changes ?? item.contentItems ?? item);
+            const output = nativeToolOutput(item, input.sessionId);
             await emit({ type: "toolCompleted", id, name, output,
               failed: item.status === "failed" || item.status === "declined" || item.success === false || (typeof item.exitCode === "number" && item.exitCode !== 0) });
           }
@@ -351,7 +378,8 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
           await startContinuation(`User answered the preceding questions:\n${JSON.stringify(answers)}`);
           return;
         }
-        finished = true; complete();
+        // 父轮完成不代表子轮结束；提前 close 会杀死仍在后台运行的原生 child。
+        parentCompleted = true; finishIfIdle();
       } else if (message.method === "error" && p.willRetry !== true) {
         throw new Error("Official Codex reported a turn error.");
       }
@@ -364,7 +392,8 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       questionController.abort(abortError());
       // 中断先发到官方进程，再关闭连接；取消不会重放已发送的提示词。
       if (connection && threadId && turnId) {
-        void connection.request("turn/interrupt", { threadId, turnId }).finally(() => fail(abortError())).catch(() => {});
+        const turns = [{ threadId, turnId }, ...[...children.children.values()].filter(child => child.status === "running" && child.turnId).map(child => ({ threadId: child.agentId, turnId: child.turnId! }))];
+        void Promise.allSettled(turns.map(turn => connection!.request("turn/interrupt", turn))).finally(() => fail(abortError()));
       } else if (!starting) fail(abortError());
     };
     input.signal.addEventListener("abort", onAbort, { once: true });
@@ -443,6 +472,16 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
         threadId = identifier(record(created.thread).id);
         await atomicWrite(mapPath, { version: 1, workspace: pathKey(workspace), sessionId: input.sessionId, threadId });
       }
+      try {
+        const relations = record(JSON.parse(await readFile(join(directory, "subagents.json"), "utf8")));
+        if (relations.version !== 1 || relations.threadId !== threadId || !Array.isArray(relations.children)) throw new Error("Invalid native child relations");
+        children.restore(relations.children.map(value => {
+          const child = record(value);
+          if (typeof child.prompt !== "string" || typeof child.agentType !== "string") throw new Error("Invalid native child relation");
+          return { agentId: identifier(child.agentId), parentToolCallId: identifier(child.parentToolCallId), prompt: child.prompt, agentType: child.agentType,
+            ...(child.parentAgentId ? { parentAgentId: identifier(child.parentAgentId) } : {}) } satisfies NativeChildRelation;
+        }));
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
       input.signal.throwIfAborted();
       // Persist before dispatch: an ambiguous failed turn must never be automatically replayed.
       const receipt = await open(join(directory, `input-${hash(input.inputId)}.json`), "wx", 0o600).catch(error => {

@@ -4,6 +4,7 @@ import {
   CoreErrorType,
   EventReducer,
   createSessionId,
+  nativeCodexChildSessionId,
   SessionEventType,
   type NativeTurnExecutor,
   type PermissionBrokerPort,
@@ -112,6 +113,68 @@ function approvalExecutor(decisions: string[]): NativeTurnExecutor {
 }
 
 describe("native turn execution", () => {
+  it("retains nested parent identity and reopens the same child with its follow-up input", async () => {
+    const store = createRecordingMessageStore();
+    const initial = { type: "subagentUpdated" as const, agentId: "a", parentToolCallId: "spawn-a", prompt: "Original task", agentType: "Codex", status: "running" as const, items: [] };
+    const { runtime, sessionId, eventStore } = fixture({ async execute(input) {
+      await input.onEvent({ ...initial, turnId: "a1" });
+      await input.onEvent({ ...initial, agentId: "b", parentAgentId: "a", parentToolCallId: "spawn-b", turnId: "b1", status: "success" });
+      await input.onEvent({ ...initial, turnId: "a1", status: "success" });
+      await input.onEvent({ ...initial, turnId: "a2", inputText: "Follow-up input" });
+      await input.onEvent({ ...initial, turnId: "a2", inputText: "Follow-up input", status: "success" });
+      return { text: "", threadId: "parent", toolCallCount: 0 };
+    } }, { sessionStore: store as unknown as SessionStorePort });
+    await runtime.executeTurn("Explicit delegation");
+    const a = nativeCodexChildSessionId(sessionId, "a"), b = nativeCodexChildSessionId(sessionId, "b");
+    expect(await store.getSession(b)).toMatchObject({ parentID: a });
+    expect(store.savedMessages.filter(m => m.sessionID === a && m.role === "assistant")).toHaveLength(2);
+    expect(store.savedParts.some(p => p.sessionID === a && p.text === "Follow-up input")).toBe(true);
+    expect((await eventStore.getEvents(a)).some(e => e.type === SessionEventType.SubagentSpawned && (e.payload as any).childSessionId === b)).toBe(true);
+  });
+  it.each(["failed", "cancelled"] as const)("settles child transcript/tool state on %s native execution", async status => {
+    const store = createRecordingMessageStore();
+    const upsertToolUsage = vi.fn(async () => {});
+    Object.assign(store, { upsertToolUsage, recordModelUsage: vi.fn(), upsertTurnUsage: vi.fn(), pruneUsage: vi.fn() });
+    const observation = { type: "subagentUpdated" as const, agentId: "child", parentToolCallId: "spawn", prompt: "Read files", agentType: "Codex", status: "running" as const, turnId: "child-turn",
+      items: [{ type: "tool" as const, id: "bash", name: "Bash", input: { command: "read only fixture" }, output: "", completed: false, failed: false }] };
+    const { runtime, eventStore, sessionId } = fixture({ async execute(input) {
+      await input.onEvent(observation);
+      throw Object.assign(new Error("fixture disconnected"), { name: status === "cancelled" ? "AbortError" : "Error" });
+    } }, { sessionStore: store as unknown as SessionStorePort });
+    await expect(runtime.executeTurn("Please delegate")).rejects.toBeDefined();
+    const childId = nativeCodexChildSessionId(sessionId, "child");
+    expect(store.savedMessages.find(m => m.sessionID === childId && m.role === "assistant")?.error?.name).toBe(status === "cancelled" ? "AbortError" : "Error");
+    expect(store.savedParts.find(p => p.sessionID === childId && p.type === "tool")?.state.status).toBe("error");
+    expect(upsertToolUsage).toHaveBeenCalledWith(expect.objectContaining({ sessionID: childId, toolCallID: "bash" }));
+    expect((await eventStore.getEvents(sessionId)).filter(e => e.type === SessionEventType.SubagentStopped)).toHaveLength(1);
+  });
+
+  it("persists native children before spawn and publishes child output on its own session", async () => {
+    const store = createRecordingMessageStore(); const received: any[] = [];
+    const childId = nativeCodexChildSessionId("sess_native-codex-regression", "child-1");
+    const observation = { type: "subagentUpdated" as const, agentId: "child-1", parentToolCallId: "spawn", prompt: "Inspect files", agentType: "Codex", status: "running" as const, items: [] };
+    const { runtime, eventStore, sessionId, modelFactory } = fixture({ async execute(input) {
+      await input.onEvent({ type: "toolStarted", id: "spawn", name: "Agent", input: { prompt: "Inspect files", run_in_background: true } });
+      await input.onEvent(observation); await input.onEvent(observation);
+      await input.onEvent({ type: "toolCompleted", id: "spawn", name: "Agent", output: "spawned" });
+      await input.onEvent({ ...observation, turnId: "child-turn", items: [{ type: "text", id: "text", text: "Live output", completed: false }] });
+      await input.onEvent({ ...observation, turnId: "child-turn", status: "success", items: [{ type: "text", id: "text", text: "Live output done", completed: true }] });
+      return { text: "", threadId: "parent", toolCallCount: 1 };
+    } }, { sessionStore: store as unknown as SessionStorePort });
+    runtime.subscribeEvents({ async onSessionEvent(event) {
+      received.push(event);
+      if (event.type === SessionEventType.SubagentSpawned) expect(await store.getSession(childId)).toMatchObject({ parentID: sessionId, taskType: "subagent_child" });
+    } });
+    await runtime.executeTurn("Please delegate");
+    const parent = await eventStore.getEvents(sessionId); const child = await eventStore.getEvents(childId);
+    expect(parent.filter(e => e.type === SessionEventType.SubagentSpawned)).toHaveLength(1);
+    expect(parent.filter(e => e.type === SessionEventType.SubagentStopped)).toHaveLength(1);
+    expect(child.some(e => e.type === SessionEventType.TurnComplete)).toBe(true);
+    expect(received.some(e => e.sessionId === childId && e.type === SessionEventType.ModelStreaming)).toBe(true);
+    expect(store.savedParts.some(p => p.sessionID === childId && p.type === "text" && p.text === "Live output done")).toBe(true);
+    expect(parent.some(e => e.type === SessionEventType.ModelStreaming && JSON.stringify(e.payload).includes("Live output"))).toBe(false);
+    expect(modelFactory).not.toHaveBeenCalled();
+  });
   const questionInput = { questions: [{ question: "Where to host?", header: "Host", options: [{ label: "Existing site", description: "Keep URL" }, { label: "New server", description: "Deploy separately" }], multiSelect: false as const }], metadata: { source: "native-codex" } };
   const questionExecutor = (answer: (answers: Record<string, string>) => void, signal?: AbortSignal): NativeTurnExecutor => ({ async execute(input) {
     await input.onEvent({ type: "toolStarted", id: "question-item", name: "AskUserQuestion", input: questionInput });

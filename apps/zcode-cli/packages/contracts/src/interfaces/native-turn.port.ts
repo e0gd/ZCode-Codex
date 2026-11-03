@@ -2,6 +2,29 @@ import type { ModelSelection } from "../model/model.js";
 import type { ModelMessageContentBlock } from "../model/index.js";
 import type { CollaborationMode } from "./session.port.js";
 import type { AskUserQuestion } from "../tools/ask-user-question.js";
+import { createSessionId, type SessionId } from "./shared.js";
+
+export function nativeCodexChildSessionId(sessionId: string, agentId: string): SessionId {
+  return createSessionId(`codex_${sessionId}_${agentId}`);
+}
+
+export type NativeSubagentItem =
+  | { type: "text"; id: string; text: string; completed: boolean }
+  | { type: "tool"; id: string; name: string; input: Record<string, unknown>; output: string; completed: boolean; failed: boolean };
+
+/** Complete observations, not commands: Codex remains the sole child executor. */
+export interface NativeSubagentUpdate {
+  type: "subagentUpdated";
+  agentId: string;
+  parentAgentId?: string;
+  parentToolCallId: string;
+  prompt: string;
+  agentType: string;
+  turnId?: string;
+  inputText?: string;
+  status: "running" | "success" | "failed" | "cancelled";
+  items: NativeSubagentItem[];
+}
 
 export type NativeCodexReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
@@ -18,6 +41,7 @@ export type NativeCodexModelResolver = (selection: ModelSelection) => NativeCode
 
 /** Native execution owns model/tool work; Core retains admission and persisted UI events. */
 export type NativeTurnEvent =
+  | NativeSubagentUpdate
   | { type: "textStarted"; itemId: string }
   | { type: "textDelta"; itemId: string; delta: string }
   | { type: "textCompleted"; itemId: string }

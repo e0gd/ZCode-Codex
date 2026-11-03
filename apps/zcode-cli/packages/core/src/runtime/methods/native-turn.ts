@@ -9,9 +9,11 @@ import type {
   PermissionRequestedPayload,
   PermissionResolvedPayload,
   NativeTurnApproval,
+  NativeSubagentUpdate,
+  NativeSubagentItem,
 } from "@zcode/contracts";
 import type { AgentRuntimeInternal } from "../internal.js";
-import { ASK_USER_QUESTION_TOOL_NAME, NativeAskUserQuestionInputSchema } from "@zcode/contracts";
+import { ASK_USER_QUESTION_TOOL_NAME, NativeAskUserQuestionInputSchema, nativeCodexChildSessionId, createSessionEvent, createTurnId } from "@zcode/contracts";
 import { linkAbortSignal } from "../../tool/executor/timeout.js";
 
 const NATIVE_APPROVAL_RULE_ID = "native-codex";
@@ -66,6 +68,7 @@ export async function executeNativeTurn(
     await this.appendEvent(event, input.traceContext);
     input.events.push(event);
   };
+  const nativeChildren = createNativeChildWriter(this, input.traceContext, emit);
   const closeText = async (completed = true): Promise<void> => {
     const segment = textSegment;
     if (!segment) return;
@@ -251,7 +254,9 @@ export async function executeNativeTurn(
       permission,
       onEvent: async (event) => {
         input.signal.throwIfAborted();
-        if (event.type === "contextCompactionStarted" || event.type === "contextCompactionCompleted") {
+        if (event.type === "subagentUpdated") {
+          await nativeChildren.update(event);
+        } else if (event.type === "contextCompactionStarted" || event.type === "contextCompactionCompleted") {
           compactDelivery = compactDelivery.then(() => observeCompaction(event));
           await compactDelivery;
         } else if (event.type === "textStarted") {
@@ -408,6 +413,7 @@ export async function executeNativeTurn(
     // 连接失败可先于 onEvent 落盘结束；先排空已接收通知，避免 failed 后又追加 started。
     await Promise.allSettled([compactDelivery]);
     const interrupted = input.signal.aborted || (error instanceof Error && error.name === "AbortError");
+    await nativeChildren.settle(interrupted ? "cancelled" : "failed");
     await closePendingCompactions(interrupted ? "interrupted" : "failed", interrupted ? "cancelled" : "api_error");
     // 原生中断仍保存已显示的文本，保留缺失 end 的未完成事实供冷恢复使用。
     await closeText(false);
@@ -449,4 +455,110 @@ export async function executeNativeTurn(
     );
     throw error;
   }
+}
+
+/** 只把原生执行事实落入既有子会话；不得创建第二条 ZCode 执行路径。 */
+function createNativeChildWriter(
+  runtime: AgentRuntimeInternal,
+  traceContext: TraceContext,
+  emitParent: (type: SessionEvent["type"], payload: unknown) => Promise<void>,
+) {
+  type Child = { observation: NativeSubagentUpdate; created: number; turnId?: string; items: Map<string, NativeSubagentItem> };
+  const children = new Map<string, Child>();
+  const sessionIdFor = (agentId: string) => nativeCodexChildSessionId(runtime.sessionId, agentId);
+  const publish = async (sessionId: typeof runtime.sessionId, type: SessionEvent["type"], payload: unknown, turnId?: string) => {
+    if (sessionId === runtime.sessionId) { await emitParent(type, payload); return; }
+    await runtime.appendEvent(createSessionEvent(type, sessionId, payload, {
+      traceId: traceContext.traceId, ...(turnId ? { turnId: createTurnId(`codex_${turnId}`) } : {}),
+    }), traceContext);
+  };
+  const update = async (observation: NativeSubagentUpdate): Promise<void> => {
+    const childId = sessionIdFor(observation.agentId);
+    const parentId = observation.parentAgentId ? sessionIdFor(observation.parentAgentId) : runtime.sessionId;
+    let child = children.get(observation.agentId);
+    const first = !child;
+    const reopening = child && child.observation.status !== "running" && observation.status === "running";
+    if (child && JSON.stringify(child.observation) === JSON.stringify(observation)) return;
+    if (!child) {
+      const parent = await runtime.sessionStore?.getSession(parentId);
+      if (runtime.sessionStore && !parent) throw new Error("Native child parent is not persisted");
+      if (parent && !await runtime.sessionStore!.getSession(childId)) await runtime.sessionStore!.createSession({
+        id: childId, parentID: parentId, projectID: parent.projectID, workspaceID: parent.workspaceID,
+        taskType: "subagent_child", slug: childId, title: observation.prompt.slice(0, 160) || "Codex",
+        directory: parent.directory, path: parent.path, version: runtime.appVersion, permission: parent.permission,
+      });
+      child = { observation, created: Date.now(), items: new Map() };
+      children.set(observation.agentId, child);
+    }
+    const relation = { agentId: observation.agentId, childSessionId: childId, parentToolCallId: observation.parentToolCallId,
+      agentType: observation.agentType, description: observation.prompt, background: false };
+    const parentTurnId = observation.parentAgentId ? children.get(observation.parentAgentId)?.turnId : undefined;
+    if (first || reopening) await publish(parentId, SessionEventType.SubagentSpawned, relation, parentTurnId);
+    const now = Date.now();
+    const observedTurnId = observation.turnId ?? (observation.status !== "running" ? `unstarted_${observation.parentToolCallId}` : undefined);
+    if (observedTurnId) {
+      const turnId = observedTurnId;
+      const userId = createMessageId(`codex_${observation.agentId}_${turnId}_input`);
+      const messageId = createMessageId(`codex_${observation.agentId}_${turnId}_output`);
+      const anchor = { turnId: createTurnId(`codex_${turnId}`) };
+      const turnInput = observation.inputText ?? observation.prompt;
+      if (child.turnId !== turnId) {
+        child.turnId = turnId; child.items.clear(); child.created = now;
+        await runtime.sessionStore?.saveMessage({ id: userId, sessionID: childId, role: "user", agent: "codex", time: { created: now }, anchor });
+        await runtime.sessionStore?.savePart({ id: createPartId(`${userId}_text`), sessionID: childId, messageID: userId, type: "text", text: turnInput });
+        await publish(childId, SessionEventType.TurnStarted, { input: turnInput, messageId: userId, turnNumber: 1, executionStartedAt: now }, turnId);
+        await publish(childId, SessionEventType.ModelStreaming, { kind: "start", delta: "", done: false, assistantMessageId: messageId }, turnId);
+      }
+      const terminal = observation.status !== "running";
+      await runtime.sessionStore?.saveMessage({
+        id: messageId, sessionID: childId, role: "assistant", parentID: userId, time: { created: child.created, ...(terminal ? { completed: now } : {}) },
+        mode: runtime.getMode(), agent: "codex", path: { cwd: runtime.workingDirectory, root: runtime.workspaceRoot },
+        cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, anchor,
+        ...(terminal ? { finish: observation.status === "success" ? "stop" : observation.status,
+          ...(observation.status !== "success" ? { error: { name: observation.status === "cancelled" ? "AbortError" : "Error" } } : {}) } : {}),
+        metadata: { executionBackend: "codex", nativeThreadId: observation.agentId, nativeTurnId: turnId },
+      });
+      for (const observedItem of observation.items) {
+        // 取消/断线可能缺少 item 终态，必须把已显示的半截工具显式收口并持久化。
+        const item = terminal && observedItem.type === "tool" && !observedItem.completed
+          ? { ...observedItem, completed: true, failed: true, output: "Native child ended before tool completion" }
+          : observedItem;
+        const previous = child.items.get(item.id);
+        if (JSON.stringify(previous) === JSON.stringify(item)) continue;
+        const partId = createPartId(`codex_${observation.agentId}_${turnId}_${item.id}`);
+        if (item.type === "text") {
+          const before = previous?.type === "text" ? previous.text : "";
+          if (!item.text.startsWith(before)) throw new Error("Native child text disagrees with its previous observation");
+          await runtime.sessionStore?.savePart({ id: partId, sessionID: childId, messageID: messageId, type: "text", text: item.text,
+            time: { start: child.created, ...(item.completed ? { end: now } : {}) } });
+          if (!previous) await publish(childId, SessionEventType.ModelStreaming, { kind: "text_start", delta: "", done: false, assistantMessageId: messageId, partId }, turnId);
+          if (item.text.length > before.length) await publish(childId, SessionEventType.ModelStreaming, { kind: "text_delta", delta: item.text.slice(before.length), done: false, assistantMessageId: messageId, partId }, turnId);
+          if (item.completed && !previous?.completed) await publish(childId, SessionEventType.ModelStreaming, { kind: "text_end", delta: "", done: true, assistantMessageId: messageId, partId }, turnId);
+        } else {
+          const time = { start: child.created, end: now };
+          await runtime.sessionStore?.savePart({ id: partId, sessionID: childId, messageID: messageId, type: "tool", tool: item.name, callID: item.id,
+            state: item.completed ? item.failed ? { status: "error", input: item.input, error: item.output, time }
+              : { status: "completed", input: item.input, output: item.output, title: item.name, metadata: {}, time }
+              : { status: "running", input: item.input, time: { start: child.created } } });
+          if (!previous) {
+            await publish(childId, SessionEventType.ToolCallScheduled, { toolCallId: item.id, toolName: item.name, input: item.input, assistantMessageId: messageId }, turnId);
+            await publish(childId, SessionEventType.ToolCallStarted, { toolCallId: item.id, toolName: item.name, startedAt: new Date(child.created) }, turnId);
+          }
+          if (item.completed && !previous?.completed) await publish(childId, SessionEventType.ToolCallResult, { toolCallId: item.id, toolName: item.name, result: { success: !item.failed, content: item.output } }, turnId);
+        }
+        child.items.set(item.id, item);
+      }
+      if (terminal && (first || child.observation.status === "running")) await publish(childId,
+        observation.status === "failed" ? SessionEventType.TurnError : SessionEventType.TurnComplete,
+        { resultType: observation.status === "cancelled" ? "cancelled" : observation.status === "failed" ? "error" : "success" }, turnId);
+    }
+    if (observation.status !== "running" && (first || child.observation.status === "running")) {
+      await publish(parentId, SessionEventType.SubagentStopped, { ...relation, status: observation.status,
+        summaryText: observation.items.filter(item => item.type === "text").map(item => item.text).join("\n\n") }, parentTurnId);
+    }
+    child.observation = structuredClone(observation);
+  };
+  return { update, async settle(status: "cancelled" | "failed") {
+    for (const child of children.values()) if (child.observation.status === "running") await update({ ...child.observation, status });
+  } };
 }

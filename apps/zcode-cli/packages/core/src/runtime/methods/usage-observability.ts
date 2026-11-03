@@ -216,8 +216,9 @@ export async function recordToolUsageFromEvent(
   const metadata = runtime.registry.get(toolName)?.metadata;
   const startedAt = event.timestamp.getTime();
   const base = {
-    id: toolUsageId(runtime.sessionId, toolCallId),
-    sessionID: runtime.sessionId,
+    // 原生 child 复用父 runtime 的持久化入口；归属必须取事件身份，不能串进父会话用量。
+    id: toolUsageId(event.sessionId, toolCallId),
+    sessionID: event.sessionId,
     turnID: event.turnId ?? traceContext.turnId,
     traceID: event.traceId ?? traceContext.traceId,
     toolCallID: toolCallId as ToolCallId,

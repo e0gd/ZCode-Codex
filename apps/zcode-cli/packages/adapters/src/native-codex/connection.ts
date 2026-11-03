@@ -1,5 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
+import type { NativeSubagentItem, NativeSubagentUpdate } from "@zcode/contracts";
+import { nativeCodexChildSessionId } from "@zcode/contracts";
 
 type RecordValue = Record<string, unknown>;
 export const record = (value: unknown): RecordValue =>
@@ -17,6 +19,128 @@ export const identifier = (value: unknown): string => {
   return value;
 };
 export type RpcMessage = { method: string; params: RecordValue; id?: string | number };
+
+export interface NativeChildRelation {
+  agentId: string;
+  parentAgentId?: string;
+  parentToolCallId: string;
+  prompt: string;
+  agentType: string;
+}
+
+export function nativeToolName(item: RecordValue): string {
+  return item.type === "commandExecution" ? "Bash" : item.type === "fileChange" ? "Edit"
+    : item.type === "collabAgentToolCall" && item.tool === "spawnAgent" ? "Agent"
+      : typeof item.tool === "string" ? item.tool : String(item.type);
+}
+
+export function nativeToolInput(item: RecordValue): RecordValue {
+  return nativeToolName(item) === "Agent" ? { ...item, executionBackend: "codex", description: typeof item.prompt === "string" ? item.prompt.slice(0, 160) : "Codex", subagent_type: "Codex", run_in_background: true } : item;
+}
+
+export function nativeToolOutput(item: RecordValue, sessionId: string): string {
+  const agentId = item.type === "collabAgentToolCall" && item.tool === "spawnAgent" && item.status === "completed" && Array.isArray(item.receiverThreadIds)
+    ? item.receiverThreadIds[0] : undefined;
+  // launch ACK 必须持久化稳定 child 身份；只靠内存 Spawned 事件，重启后嵌套目录也会丢失。
+  if (typeof agentId === "string") return JSON.stringify({ ...item, status: "async_launched", agentId,
+    childSessionId: nativeCodexChildSessionId(sessionId, agentId), agentType: "Codex", description: item.prompt });
+  return typeof item.aggregatedOutput === "string" ? item.aggregatedOutput : JSON.stringify(item.result ?? item.changes ?? item.contentItems ?? item);
+}
+
+/** Transport observations only. Core persists sessions and publishes product events. */
+export class NativeChildObserver {
+  readonly children = new Map<string, NativeChildRelation & {
+    turnId?: string; inputText?: string; status: NativeSubagentUpdate["status"]; items: Map<string, NativeSubagentItem>; retiredTurns: Set<string>;
+  }>();
+
+  constructor(private readonly emit: (event: NativeSubagentUpdate) => Promise<void>, private readonly rootSessionId: string) {}
+
+  restore(relations: NativeChildRelation[]): void {
+    for (const relation of relations) this.children.set(relation.agentId, { ...relation, status: "success", items: new Map(), retiredTurns: new Set() });
+  }
+
+  relations(): NativeChildRelation[] {
+    return [...this.children.values()].map(({ agentId, parentAgentId, parentToolCallId, prompt, agentType }) =>
+      ({ agentId, parentAgentId, parentToolCallId, prompt, agentType }));
+  }
+
+  get running(): boolean { return [...this.children.values()].some(child => child.status === "running"); }
+
+  private async publish(agentId: string): Promise<void> {
+    const child = this.children.get(agentId)!;
+    const { retiredTurns: _retired, ...observation } = child;
+    await this.emit({ type: "subagentUpdated", ...observation, items: [...child.items.values()] });
+  }
+
+  async collaboration(item: RecordValue, parentAgentId?: string): Promise<boolean> {
+    if (item.type !== "collabAgentToolCall") return false;
+    let added = false;
+    for (const value of Array.isArray(item.receiverThreadIds) ? item.receiverThreadIds : []) {
+      const agentId = identifier(value);
+      if (!this.children.has(agentId) && item.tool === "spawnAgent" && item.status !== "failed") {
+        this.children.set(agentId, { agentId, parentAgentId, parentToolCallId: identifier(item.id),
+          prompt: typeof item.prompt === "string" ? item.prompt : "", agentType: "Codex",
+          status: "running", items: new Map(), retiredTurns: new Set() });
+        added = true;
+        await this.publish(agentId);
+      }
+      const child = this.children.get(agentId);
+      if (!child) continue;
+      const state = record(record(item.agentsStates)[agentId]);
+      if (state.status === "running" || state.status === "pendingInit") {
+        if (child.status !== "running") {
+          if (child.turnId) child.retiredTurns.add(child.turnId);
+          child.status = "running"; child.turnId = undefined; child.inputText = undefined; child.items.clear(); await this.publish(agentId);
+        }
+      } else if (["completed", "errored", "interrupted", "shutdown", "notFound"].includes(String(state.status))) {
+        child.status = state.status === "completed" ? "success" : state.status === "errored" || state.status === "notFound" ? "failed" : "cancelled";
+        await this.publish(agentId);
+      }
+    }
+    return added;
+  }
+
+  async notification(message: RpcMessage): Promise<boolean> {
+    const p = message.params;
+    const child = this.children.get(String(p.threadId));
+    if (!child) return false;
+    const nativeTurnId = typeof p.turnId === "string" ? p.turnId : record(p.turn).id;
+    if (typeof nativeTurnId !== "string") return true;
+    if (child.retiredTurns.has(nativeTurnId)) return true;
+    if (child.turnId === nativeTurnId && child.status !== "running") return true;
+    if (child.turnId !== nativeTurnId) {
+      // 新轮只能由 started/item 通知建立；迟到的旧轮终态不能覆盖新工作。
+      if (message.method === "turn/completed" || message.method === "error") return true;
+      if (child.turnId) child.retiredTurns.add(child.turnId);
+      child.turnId = nativeTurnId; child.inputText = undefined; child.items.clear(); child.status = "running";
+    }
+    if (message.method === "item/agentMessage/delta") {
+      const id = identifier(p.itemId); const previous = child.items.get(id);
+      if (previous?.completed || typeof p.delta !== "string") return true;
+      child.items.set(id, { type: "text", id, text: (previous?.type === "text" ? previous.text : "") + p.delta, completed: false });
+    } else if (message.method === "item/started" || message.method === "item/completed") {
+      const item = record(p.item); const id = identifier(item.id); const completed = message.method === "item/completed";
+      if (child.items.get(id)?.completed) return true;
+      if (item.type === "userMessage") {
+        child.inputText = (Array.isArray(item.content) ? item.content : []).flatMap(value => typeof record(value).text === "string" ? [record(value).text] : []).join("\n");
+      } else if (item.type === "agentMessage") {
+        const previous = child.items.get(id);
+        child.items.set(id, { type: "text", id, text: typeof item.text === "string" && (completed || !previous) ? item.text : previous?.type === "text" ? previous.text : "", completed });
+      } else if (["commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall", "webSearch", "imageView", "imageGeneration"].includes(String(item.type))) {
+        child.items.set(id, { type: "tool", id, name: nativeToolName(item), input: nativeToolInput(item),
+          output: nativeToolOutput(item, this.rootSessionId), completed,
+          failed: item.status === "failed" || item.status === "declined" || item.success === false || (typeof item.exitCode === "number" && item.exitCode !== 0) });
+      } else return true;
+    } else if (message.method === "turn/completed") {
+      const status = record(p.turn).status;
+      child.status = status === "completed" ? "success" : status === "interrupted" ? "cancelled" : "failed";
+    } else if (message.method === "error" && p.willRetry !== true) child.status = "failed";
+    else return true;
+    await this.publish(child.agentId);
+    return true;
+  }
+
+}
 
 /** One stdio connection; never retries a possibly accepted request. */
 export class CodexConnection {

@@ -59,6 +59,14 @@ An initial test invocation incorrectly split a single path into character filter
 
 Settings → Agent capabilities → Subagents contains a Codex collaboration switch, **Automatically delegate to subagents**. It defaults off: delegation then requires an explicit user, project, or skill instruction. Enabling it permits useful independent work to be delegated proactively. The setting is global to the executing computer and is read again on the next turn, including existing Web/mobile sessions connected to that computer. It does not change the selected model, reasoning level, sandbox or ZCode agent definitions. The official hosted Web frontend does not acquire the new settings control from a desktop update.
 
+## Native child visibility
+
+Codex-spawned agents now use ZCode's existing spawn/status rows, composer robot button, running-agent list and read-only child-session view. Child text and tools are persisted under their own child session, including nested agents and later follow-up turns. Desktop and connected Web/mobile clients consume the same standard protocol state. The bridge keeps the native process alive when the parent finishes before its children; stopping the main turn also stops its observed children.
+
+Ended children remain available after restart. An unfinished child whose executing runtime disappeared is reported as lost. Native child observation does not expose ZCode's individual background-task stop button. Child-only permission requests and questions currently decline or return no answers; parent permission/question support is unchanged.
+
+To try it with automatic delegation off, explicitly ask Codex to spawn two agents for independent tasks, then click the robot button while they run. Fully exit and relaunch the modified desktop after installing an update; connected Web/mobile clients use that executing desktop's updated CLI.
+
 ## Upstream maintenance
 
 `origin` is the fork, and `upstream` is `https://github.com/zai-org/ZCode.git`. Keep the fork's `main` aligned with upstream and develop the integration on `native-codex`. Merge upstream updates into the feature branch only after reviewing compatibility and rerunning the required checks.

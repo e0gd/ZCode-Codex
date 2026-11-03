@@ -123,6 +123,22 @@ function subagentEvent(
 }
 
 describe("subagent session query", () => {
+  it("recognizes the terminal native turn even when its single assistant contains tools", () => {
+    const child = toolMessage({ id: "child-output" });
+    child.info.metadata = { executionBackend: "codex" };
+    const result = projectSessionSubagents({ revision: 1, parentSession: session("parent", "interactive"),
+      messages: [toolMessage({ id: "native", childSessionId: "child", runInBackground: true, output: { status: "async_launched", childSessionId: "child" } })],
+      childSessionsById: new Map([["child", session("child")]]), childMessagesById: new Map([["child", [child]]]), childProjectionsById: new Map(), parentProjection: projection("idle") });
+    expect(result.running).toEqual([]); expect(result.ended[0]?.status).toBe("success");
+  });
+  it.each(["idle", "running"] as const)("reconciles unfinished native children against the %s executing parent", parentStatus => {
+    const message = toolMessage({ id: "native", childSessionId: "child", runInBackground: true, output: { status: "async_launched", childSessionId: "child" } });
+    (message.parts[0] as ToolPart).state.input.executionBackend = "codex";
+    const result = projectSessionSubagents({ revision: 1, parentSession: session("parent", "interactive"), messages: [message],
+      childSessionsById: new Map([["child", session("child")]]), childMessagesById: new Map(), childProjectionsById: new Map(), parentProjection: projection(parentStatus) });
+    expect(result.running).toHaveLength(parentStatus === "running" ? 1 : 0);
+    if (parentStatus === "idle") expect(result.ended[0]?.status).toBe("lost");
+  });
   it("projects Agent and legacy Task refs but omits non-persisted children", () => {
     const result = projectSessionSubagents({
       revision: 3,

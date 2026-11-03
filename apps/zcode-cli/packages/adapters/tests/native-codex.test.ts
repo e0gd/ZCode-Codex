@@ -9,6 +9,7 @@ import type { NativeTurnApproval, NativeTurnEvent } from "@zcode/contracts";
 const mock = vi.hoisted(() => ({ spawn: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawn: mock.spawn }));
 import { NativeCodexExecutor, createNativeCodexExecutor, createNativeCodexExecutorFromEnv, discoverNativeCodexBinary } from "../src/native-codex/index.js";
+import { NativeChildObserver } from "../src/native-codex/connection.js";
 
 type Message = { id?: string | number; method?: string; params?: Record<string, unknown>; result?: unknown; error?: unknown };
 const roots: string[] = [];
@@ -65,6 +66,63 @@ function input(overrides: Partial<Parameters<NativeCodexExecutor["execute"]>[0]>
     requestUserInput: vi.fn(async () => ({} as Record<string, string>)), ...overrides };
 }
 const activeParams = { threadId: "thread-1", turnId: "turn-1" };
+
+describe("native child observation", () => {
+  it("preserves parallel/nested identities, reuses a child, and rejects retired child turns", async () => {
+    const emit = vi.fn(async () => {}); const observer = new NativeChildObserver(emit, "session");
+    const spawn = (id: string, target: string) => ({ type: "collabAgentToolCall", id, tool: "spawnAgent", status: "completed", receiverThreadIds: [target], prompt: target });
+    await observer.collaboration(spawn("spawn-a", "a"));
+    await observer.collaboration(spawn("spawn-b", "b"));
+    await observer.collaboration(spawn("spawn-c", "c"), "a");
+    expect(observer.relations()).toContainEqual(expect.objectContaining({ agentId: "c", parentAgentId: "a", parentToolCallId: "spawn-c" }));
+    await observer.notification({ method: "item/agentMessage/delta", params: { threadId: "a", turnId: "old", itemId: "text", delta: "old" } });
+    await observer.notification({ method: "turn/completed", params: { threadId: "a", turn: { id: "old", status: "completed" } } });
+    await observer.collaboration({ type: "collabAgentToolCall", id: "followup", tool: "sendInput", receiverThreadIds: ["a"], agentsStates: { a: { status: "running" } } });
+    await observer.notification({ method: "item/agentMessage/delta", params: { threadId: "a", turnId: "new", itemId: "text", delta: "new" } });
+    const count = emit.mock.calls.length;
+    await observer.notification({ method: "item/agentMessage/delta", params: { threadId: "a", turnId: "old", itemId: "text", delta: "stale" } });
+    await observer.notification({ method: "turn/completed", params: { threadId: "a", turn: { id: "old", status: "completed" } } });
+    expect(emit.mock.calls).toHaveLength(count); expect(observer.children.get("a")?.parentToolCallId).toBe("spawn-a");
+    expect(observer.children.get("a")?.status).toBe("running");
+    await observer.collaboration({ type: "collabAgentToolCall", tool: "closeAgent", receiverThreadIds: ["a", "b", "c"], agentsStates: { a: { status: "shutdown" }, b: { status: "shutdown" }, c: { status: "shutdown" } } });
+    expect(observer.running).toBe(false);
+    const restored = new NativeChildObserver(emit, "session"); restored.restore(observer.relations());
+    expect(restored.running).toBe(false); expect(restored.relations()).toEqual(observer.relations());
+  });
+
+  it("does not invent a child for a failed spawn", async () => {
+    const emit = vi.fn(async () => {}); const observer = new NativeChildObserver(emit, "session");
+    await observer.collaboration({ type: "collabAgentToolCall", tool: "spawnAgent", id: "failed", status: "failed", receiverThreadIds: [], agentsStates: {} });
+    expect(observer.relations()).toEqual([]); expect(emit).not.toHaveBeenCalled();
+  });
+
+  it("keeps the process alive after parent completion and forwards only related child output", async () => {
+    let finishChild: () => void = () => {};
+    const rpc = server((m, emit) => {
+      if (m.method !== "turn/start") return false;
+      emit({ id: m.id, result: { turn: { id: "turn-1" } } });
+      const spawn = { type: "collabAgentToolCall", id: "spawn-item", tool: "spawnAgent", senderThreadId: "thread-1", status: "completed", receiverThreadIds: ["child-1"], prompt: "Inspect the child", agentsStates: { "child-1": { status: "running", message: null } } };
+      emit({ method: "item/completed", params: { ...activeParams, item: spawn } });
+      emit({ method: "item/agentMessage/delta", params: { threadId: "foreign-child", turnId: "child-turn", itemId: "foreign", delta: "foreign" } });
+      emit({ method: "item/agentMessage/delta", params: { threadId: "child-1", turnId: "child-turn", itemId: "child-text", delta: "live child" } });
+      emit({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed" } } });
+      finishChild = () => {
+        emit({ method: "item/completed", params: { threadId: "child-1", turnId: "child-turn", item: { type: "agentMessage", id: "child-text", text: "live child done" } } });
+        emit({ method: "turn/completed", params: { threadId: "child-1", turn: { id: "child-turn", status: "completed" } } });
+      };
+      return true;
+    });
+    const { executor } = await fixture(); const request = input(); let settled = false;
+    const pending = executor.execute(request).then(result => { settled = true; return result; });
+    await vi.waitFor(() => expect(request.onEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "subagentUpdated", agentId: "child-1" })));
+    expect(settled).toBe(false); expect(rpc.children[0]!.kill).not.toHaveBeenCalled();
+    finishChild(); await pending;
+    const events = vi.mocked(request.onEvent).mock.calls.map(([event]) => event);
+    expect(events).toContainEqual(expect.objectContaining({ type: "toolStarted", name: "Agent", input: expect.objectContaining({ run_in_background: true }) }));
+    expect(events).toContainEqual(expect.objectContaining({ type: "subagentUpdated", agentId: "child-1", status: "success" }));
+    expect(JSON.stringify(events)).toContain("live child done"); expect(JSON.stringify(events)).not.toContain("foreign");
+  });
+});
 
 describe("native automatic subagent preference", () => {
   it("defaults to explicit delegation and preserves configured developer instructions", async () => {
