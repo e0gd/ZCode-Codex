@@ -23,7 +23,7 @@ before(async () => {
         enforce: "pre",
         load(id) {
           if (id.endsWith("/project-sidebar/ProjectDirectoryProvider.tsx"))
-            return "export const useProjectDirectory=()=>window.__projectDeviceDirectory; export const useOptionalProjectDirectory=useProjectDirectory;";
+            return "export const useProjectDirectory=()=>window.__projectDeviceDirectory; export const useOptionalProjectDirectory=useProjectDirectory; export const useProjectSelectionDirectory=useProjectDirectory; export const useOptionalProjectDirectoryActions=useProjectDirectory;";
         },
         configureServer(vite) {
           vite.middlewares.use(async (req, res, next) => {
@@ -98,6 +98,56 @@ async function measure(row, deviceTestId, name) {
     { deviceTestId, name },
   );
 }
+
+for (const width of [390, 1200])
+  for (const theme of ["light", "dark"])
+    for (const locale of ["zh-CN", "en-US"])
+      test(`PROJECT-ENGINE-WEB ${width}/${theme}/${locale}`, { timeout: 60000 }, async () => {
+        const context = await browser.newContext({
+          viewport: { width, height: 844 },
+          hasTouch: width === 390,
+        });
+        const page = await context.newPage();
+        page.setDefaultTimeout(15000);
+        page.setDefaultNavigationTimeout(60000);
+        const errors = [];
+        page.on("pageerror", (error) => errors.push(error.message));
+        const activate = (locator) => (width === 390 ? locator.tap() : locator.click());
+        try {
+          const query = new URLSearchParams({ theme, locale, mode: "engine" });
+          await page.goto(`${origin}fixture?${query}`);
+          const selector = page.getByTestId("virtual-project-engine");
+          assert.equal(await selector.textContent(), "ZCode");
+          await activate(selector);
+          await activate(page.getByRole("option", { name: "Codex", exact: true }));
+          assert.equal(await selector.textContent(), "Codex");
+          const bounds = await selector.boundingBox();
+          assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width);
+          assert.match(
+            await page.getByTestId("virtual-project-engine-description").textContent(),
+            /OpenAI Responses/,
+          );
+          await page.getByTestId("virtual-project-name").fill("Web Codex");
+          await page.screenshot({
+            path: join(artifacts, `engine-${width}-${theme}-${locale}.png`),
+          });
+          await activate(page.getByTestId("virtual-project-save"));
+          await activate(page.getByTestId("project-folder-trust-confirm"));
+          const output = page.getByTestId("engine-save-result");
+          await output.waitFor();
+          const saved = JSON.parse(await output.textContent());
+          assert.equal(saved.executionEngine, "codex");
+          assert.deepEqual(saved.roots, ["/example"]);
+          query.set("mode", "engine-edit");
+          await page.goto(`${origin}fixture?${query}`);
+          const fixed = page.getByTestId("virtual-project-engine");
+          assert.equal(await fixed.inputValue(), "Codex");
+          assert.equal(await fixed.getAttribute("readonly"), "");
+          assert.deepEqual(errors, []);
+        } finally {
+          await context.close();
+        }
+      });
 
 for (const width of [390, 1200])
   for (const theme of ["light", "dark"])

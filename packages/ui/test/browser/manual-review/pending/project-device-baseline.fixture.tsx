@@ -2,6 +2,9 @@ import { createRoot } from "react-dom/client";
 import { projectKey } from "@/project-sidebar/view.js";
 import { ProjectNode } from "@/project-sidebar/ProjectNode.js";
 import { ProjectComposerMenu } from "@/project-sidebar/ProjectComposerMenu.js";
+import { ProjectEditor } from "@/project-sidebar/ProjectEditor.js";
+import type { IProjectService } from "@/project-sidebar/contract.js";
+import { useState } from "react";
 import type { ProjectNodeProps } from "@/project-sidebar/ProjectNodeContent.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
@@ -48,38 +51,66 @@ Object.assign(window, {
     service: {},
     remoteService: {},
     refresh: async () => {},
+    preferences: { prepend: noop },
   },
 });
+// 只替换服务边界，触摸选择、目录确认与保存使用生产编辑器。
+function EngineFixture() {
+  const [saved, setSaved] = useState<Record<string, unknown> | null>(null);
+  const editing = params.get("mode") === "engine-edit";
+  const service = {
+    async saveProject(input: Record<string, unknown>) {
+      setSaved(input);
+      return { ...project, hostId: "local", executionEngine: input.executionEngine ?? "codex" };
+    },
+  } as unknown as IProjectService;
+  return saved ? (
+    <output data-testid="engine-save-result">{JSON.stringify(saved)}</output>
+  ) : (
+    <ProjectEditor
+      project={editing ? { ...project, hostId: "local", executionEngine: "codex" } : null}
+      initialRoots={["/example"]}
+      projects={[]}
+      service={service}
+      onClose={noop}
+      onSaved={async () => {}}
+    />
+  );
+}
 createRoot(document.getElementById("root")!).render(
   <ZCodeIntlProvider initialLocale={locale}>
     <TooltipProvider>
-      <main className="min-h-screen bg-background p-4 text-foreground">
-        <section className="w-64 max-w-full bg-sidebar" aria-label="Sidebar">
-          <ProjectNode
-            project={project}
-            remoteHost={host}
-            deviceLabel={deviceLabel}
-            expanded={false}
-            onExpandedChange={noop}
-            tasks={[]}
-            onCreate={noop}
-            onEdit={noop}
-            onDelete={noop}
-            onPin={noop}
-            onMove={noop}
-            onSelect={noop}
-            refresh={async () => {}}
-          />
-        </section>
-        <div className="mt-8">
-          <ProjectComposerMenu
-            workspacePath="/example"
-            compactForRemoteControl={params.get("mobile") === "1"}
-            onCreateTask={noop}
-            onSelectConversationWorkspace={noop}
-          />
-        </div>
-      </main>
+      {params.get("mode")?.startsWith("engine") ? (
+        <EngineFixture />
+      ) : (
+        <main className="min-h-screen bg-background p-4 text-foreground">
+          <section className="w-64 max-w-full bg-sidebar" aria-label="Sidebar">
+            <ProjectNode
+              project={project}
+              remoteHost={host}
+              deviceLabel={deviceLabel}
+              expanded={false}
+              onExpandedChange={noop}
+              tasks={[]}
+              onCreate={noop}
+              onEdit={noop}
+              onDelete={noop}
+              onPin={noop}
+              onMove={noop}
+              onSelect={noop}
+              refresh={async () => {}}
+            />
+          </section>
+          <div className="mt-8">
+            <ProjectComposerMenu
+              workspacePath="/example"
+              compactForRemoteControl={params.get("mobile") === "1"}
+              onCreateTask={noop}
+              onSelectConversationWorkspace={noop}
+            />
+          </div>
+        </main>
+      )}
     </TooltipProvider>
   </ZCodeIntlProvider>,
 );

@@ -125,6 +125,12 @@ Two isolated runtime checks used official Codex 0.166.0 and a loopback Responses
 
 Local follow-up evidence is retained under `%LOCALAPPDATA%/CodexGitSetup/`: `native-attachment-*.log`, `native-image-runtime.log`, `image-runtime-*/report.json`, `packaged-image-upload.log`, `packaged-image-upload-*/report.json`, `native-image-desktop-build.log` and `native-image-package.log`. Test homes and Codex threads are isolated from the live installation.
 
+### Web project-engine follow-up
+
+The shared production `ProjectEditor` already exposes the engine selector during creation and deliberately keeps it read-only for existing projects. A browser fixture now exercises that component with only the service boundary controlled: 390 px touch and 1200 px mouse, light/dark themes, Chinese/English. All **8/8** cases passed: default ZCode, select Codex, folder confirmation, save request with the Codex engine and chosen root, and read-only Codex when editing. Evidence: `mobile-engine-browser.log` and the ignored `packages/desktop/.e2e-artifacts/project-device-baseline/engine-*.png` screenshots.
+
+The production Web frontend build passed independently. A desktop package cannot replace static assets hosted at the official remote-control website; deployment of the branch frontend and its access URL still require separate verification. These browser tests do not establish which frontend a user's phone is currently loading, nor do they change the immutable project-engine contract.
+
 Raw evidence stays outside Git under the validation machine's `%LOCALAPPDATA%/CodexGitSetup/` directory:
 
 - `adapter-baseline-audit/REPORT.md`: case-by-case findings.
