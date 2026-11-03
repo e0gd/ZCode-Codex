@@ -1059,6 +1059,8 @@ export const hostProjectWorkspacePreparedValueSchema = z
   .object({
     hostId: nonEmptyStringSchema,
     projectId: nonEmptyStringSchema.nullable(),
+    // 项目服务会返回引擎元数据；遗漏后严格校验会丢弃手机新建/恢复的导航响应。旧 Host 可省略。
+    executionEngine: z.enum(["zcode", "codex"]).optional(),
     workspacePath: nonEmptyStringSchema,
     workspaceIdentity: nonEmptyStringSchema.optional(),
     additionalDirectories: z.array(nonEmptyStringSchema),

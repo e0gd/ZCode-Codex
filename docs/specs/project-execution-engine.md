@@ -40,6 +40,8 @@ sequenceDiagram
 
 现有 owner/lease、workspaceIdentity、stale generation 与 CommandInbox 不变。Desktop continuous 与手机 replayable 均连接同一 Host 与同一会话，不创建额外手机引擎。远端项目在其所属 Host 查找可执行程序及读取配置；旧远端没有新能力时仍兼容默认 ZCode，不宣称旧远端支持 Codex。
 
+手机新建任务与打开已有任务共用 Host 的项目导航。`project-workspace-prepared` 的成功结果允许携带项目服务返回的可选 `executionEngine`（仅 `zcode` / `codex`）；旧 Host 缺省该字段仍有效。严格校验不得因合法的项目引擎元数据丢弃导航响应，也不得放宽其它字段或允许手机在导航请求中指定引擎。Main 只据目录和 Registry descriptor 建立 bridge，引擎仍由 Host 的项目归属解析。验收须将真实导航结果经过 Host 消息校验，并用官方 3.17.1 网页资源验证项目内新建及全局新建可进入草稿；不得以仅渲染新建项目选择器代替新建任务验收。
+
 ## UI 与验收
 
 字段顺序为项目名称、设备、执行引擎、源文件夹。选择器复用已有 Select 与中英文文案，默认 ZCode；保存过程中禁用，编辑时只读。显示 Codex 需要单独安装及支持的服务商类型，不把环境变量写入产品使用流程。

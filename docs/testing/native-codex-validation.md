@@ -131,6 +131,14 @@ The shared production `ProjectEditor` already exposes the engine selector during
 
 The production Web frontend build passed independently. A desktop package cannot replace static assets hosted at the official remote-control website; deployment of the branch frontend and its access URL still require separate verification. These browser tests do not establish which frontend a user's phone is currently loading, nor do they change the immutable project-engine contract.
 
+### Official remote new-task follow-up
+
+The project-navigation service returns `executionEngine` with its prepared directory. The desktop's strict `project-workspace-prepared` response schema omitted that optional field, rejecting valid navigation results before the mobile workspace bridge could open. The red regression reproduced `Unrecognized key: "executionEngine"`. The schema now accepts only the optional `zcode` / `codex` values; legacy responses still parse, unknown values and extra fields still fail, and navigation requests cannot override the project engine.
+
+The existing remote-task browser acceptance now runs actual navigation output through that Host response schema. Both the official `https://zcode.z.ai/remote/v4?app_version=3.17.1` assets and the source frontend passed **4/4** configurations each: Chinese/English and light/dark at 390 px. Project New task and the top New task button entered a draft with an editable composer. The top button retained the current project's Codex engine under the existing inheritance contract. Existing-task open, failed remote bridge without showing stale local history, successful retry, correct workspace identity, and bridge reuse also passed. Browser authentication, relay and service responses were isolated fixtures; no real user session received a message and no model request was sent. This establishes compatibility with official frontend assets, not physical-phone or live-relay acceptance.
+
+Root typecheck passed, root lint reported 0 errors / 83 existing warnings, and the production desktop build passed. Evidence is retained outside Git as `remote-new-task-*.log`, with browser screenshots, navigation traffic and results under the ignored `.tmp/remote-task-open-e2e/{official,source}/` directories.
+
 Raw evidence stays outside Git under the validation machine's `%LOCALAPPDATA%/CodexGitSetup/` directory:
 
 - `adapter-baseline-audit/REPORT.md`: case-by-case findings.

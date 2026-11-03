@@ -5,7 +5,12 @@ import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { chromium } from "playwright-core";
-import { ServiceChannels } from "@zcode/shared";
+import {
+  ServiceChannels,
+  hostResponseMessageSchema,
+  hostPrepareProjectWorkspaceMessageSchema,
+} from "@zcode/shared";
+import { createProjectWorkspaceNavigation } from "../../../../../services/src/project-workspace-navigation/index.ts";
 import { V4_WIRE_PROTOCOL_VERSION } from "@zcode/shared/zcode-protocol-v4";
 import { Emitter } from "../../../../../rpc/src/index.ts";
 import { taskSnapshotFrame } from "./remote-task-open.fixture.mjs";
@@ -13,9 +18,39 @@ import { createDeviceSwitchDesktopBridge } from "./remote-device-switch.helpers.
 import { setup, assertEventually } from "./remote-login-v2.helpers.mjs";
 
 const origin = process.env.REMOTE_LOGIN_E2E_ORIGIN || "http://127.0.0.1:5178";
-const artifacts = resolve(".tmp/remote-task-open-e2e");
+const artifacts = resolve(
+  ".tmp/remote-task-open-e2e",
+  new URL(origin).hostname === "zcode.z.ai" ? "official" : "source",
+);
 await mkdir(artifacts, { recursive: true });
-const browser = await chromium.launch({ channel: "chrome", headless: true });
+// 使用真实导航输出经过进程协议，避免 RPC 替身遗漏新增项目元数据造成假通过。
+const prepareLocal = async (request) => {
+  const directories = {
+    workspacePath: localPath,
+    additionalDirectories: [],
+    projectId: request.projectId ?? null,
+    executionEngine: request.projectId ? "codex" : "zcode",
+  };
+  const navigation = createProjectWorkspaceNavigation({
+    projectService: { prepareSession: async () => directories },
+    remoteProjectService: {},
+    readConnectionOwner: () => undefined,
+    openRemoteWorkspace: async () => {
+      throw new Error("Local navigation must not open a remote scope");
+    },
+  });
+  const value = await navigation.prepare(request);
+  return hostResponseMessageSchema.parse({
+    type: "project-workspace-prepared",
+    requestId: "e2e-navigation",
+    result: { ok: true, value },
+  }).result.value;
+};
+const browser = await chromium.launch(
+  process.env.CHROME_EXECUTABLE_PATH
+    ? { executablePath: process.env.CHROME_EXECUTABLE_PATH, headless: true }
+    : { channel: "chrome", headless: true },
+);
 const results = [];
 const hostId = "remote:server:e2e-source";
 const localPath = "/workspace/local";
@@ -33,7 +68,10 @@ const project = (id, hostId, rootPath) => ({
   createdAt: 1,
   updatedAt: 2,
 });
-const projects = [project("LOCAL", "local", localPath), project("REMOTE", hostId, remotePath)];
+const projects = [
+  { ...project("LOCAL", "local", localPath), executionEngine: "codex" },
+  project("REMOTE", hostId, remotePath),
+];
 const task = (taskId, projectId, hostId, workspacePath, workspaceIdentity) => ({
   taskId,
   projectId,
@@ -87,6 +125,39 @@ const directory = {
   ],
 };
 try {
+  // 红灯回归：新增引擎不能让合法响应被严格 schema 丢弃，旧响应与拒绝边界均保留。
+  for (const projectId of [null, "LOCAL"]) {
+    const value = await prepareLocal({ projectId });
+    assert.equal(value.executionEngine, projectId ? "codex" : "zcode");
+    const { executionEngine: _engine, ...legacy } = value;
+    assert.equal(
+      hostResponseMessageSchema.safeParse({
+        type: "project-workspace-prepared",
+        requestId: "legacy",
+        result: { ok: true, value: legacy },
+      }).success,
+      true,
+    );
+    for (const extra of [{ executionEngine: "unknown" }, { providerApiKey: "dummy-forbidden" }])
+      assert.equal(
+        hostResponseMessageSchema.safeParse({
+          type: "project-workspace-prepared",
+          requestId: "invalid",
+          result: { ok: true, value: { ...value, ...extra } },
+        }).success,
+        false,
+      );
+  }
+  assert.equal(
+    hostPrepareProjectWorkspaceMessageSchema.safeParse({
+      type: "prepare-project-workspace",
+      requestId: "client-engine",
+      clientMode: "web-remote-replayable",
+      projectId: null,
+      executionEngine: "codex",
+    }).success,
+    false,
+  );
   for (const theme of ["zai-light", "zai-dark"])
     for (const locale of ["zh-CN", "en-US"]) {
       const h = await setup(browser, { width: 390, theme, locale, signedIn: true });
@@ -151,10 +222,20 @@ try {
                   },
                 },
                 [`${ServiceChannels.ZCodeAgent}:initializeConversationV4`]: null,
+                [`${ServiceChannels.ZCodeAgent}:getSessionLifecycle`]: null,
+                [`${ServiceChannels.Project}:prepareSession`]: (params) =>
+                  prepareLocal({
+                    projectId: params?.projectId ?? null,
+                    draftId: params?.draftId,
+                    reuseDraft: params?.reuseDraft,
+                  }),
                 [`${ServiceChannels.Project}:readTree`]: (params) => ({
                   projects: projects.filter((p) => p.hostId === (params?.hostId || "local")),
                   tasks: tasks.filter((t) => t.hostId === (params?.hostId || "local")),
                 }),
+                [`${ServiceChannels.Project}:readProjects`]: (params) =>
+                  projects.filter((project) => project.hostId === (params?.hostId || "local")),
+                [`${ServiceChannels.TaskGroups}:read`]: { groups: [], members: [], order: [] },
                 [`${ServiceChannels.RemoteProjects}:readDirectory`]: directory,
                 [`${ServiceChannels.RemoteProjects}:refreshEntry`]: null,
                 [`${ServiceChannels.ZCodeTask}:getTaskMeta`]: (input) =>
@@ -204,7 +285,7 @@ try {
           }
           const result = {
             windowControlSessionId: "e2e-device",
-            desktopAppVersion: "3.15.1",
+            desktopAppVersion: "3.17.1",
             workspaces,
             initialViewState: {
               activeWorkspaceKey: localPath,
@@ -232,6 +313,18 @@ try {
           }
           if (payload.zcode_type === "workspace-bridge-open") {
             traffic.opens.push(payload);
+            if (payload.project) {
+              void prepareLocal(payload.project)
+                .then((value) => {
+                  traffic.prepared ??= [];
+                  traffic.prepared.push(value);
+                  ready({ ...payload, workspaceKey: value.workspacePath });
+                })
+                .catch((error) => {
+                  traffic.errors.push(error.message);
+                });
+              return;
+            }
             if (payload.workspaceKey === identity) {
               // 测试主动释放响应，断言等待阶段；不用定时器制造时序。
               pending = () => {
@@ -253,7 +346,7 @@ try {
       });
       try {
         await page.goto(
-          new URL("/remote/v4?app_version=3.15.1&sid=e2e-device&mid=e2e-mid", origin).href,
+          new URL("/remote/v4?app_version=3.17.1&sid=e2e-device&mid=e2e-mid", origin).href,
         );
         const local = page.locator('[data-project-name="E2E_MRO01_LOCAL"]');
         const remote = page.locator('[data-project-name="E2E_MRO01_REMOTE"]');
@@ -274,6 +367,31 @@ try {
         const home = page.locator('[data-mobile-page="home"]');
         const chat = page.locator('[data-mobile-page="chat"]');
         await home.waitFor();
+        const prefix = `${theme}-${locale}`;
+        // 项目新建与全局新建都必须完成 Host 导航，进入可编辑草稿；不发送模型请求。
+        for (const entry of ["project", "global"]) {
+          const preparedBefore = traffic.prepared?.length ?? 0;
+          if (entry === "project") {
+            await local.hover();
+            await local.getByTestId("virtual-project-create-task").click();
+          } else await page.getByTestId("task-new-button").click();
+          await chat.waitFor();
+          const composer = page.getByTestId("v4-composer-input");
+          await composer.waitFor();
+          await assertEventually(() => traffic.prepared?.length > preparedBefore);
+          // 顶部新建按现有合同继承当前任务/草稿的项目，不能把它误判为无归属 ZCode。
+          assert.equal(traffic.prepared.at(-1).projectId, "LOCAL");
+          assert.equal(traffic.prepared.at(-1).executionEngine, "codex");
+          await composer.fill(`E2E_UNSENT_${entry}`);
+          assert.equal(await composer.innerText(), `E2E_UNSENT_${entry}`);
+          assert.equal(await page.locator('[data-session-id="REMOTE_TASK"]').count(), 0);
+          await page.screenshot({
+            path: resolve(artifacts, `${prefix}-${entry}-draft.png`),
+            fullPage: true,
+          });
+          await page.getByRole("button", { name: /返回任务首页|Back to task home/ }).click();
+          await home.waitFor();
+        }
         // 先实际打开本地历史再返回列表，确保失败场景持有可被误展示的旧会话。
         await local.getByText("E2E_MRO01_LOCAL_TASK", { exact: true }).click();
         await chat.waitFor();
@@ -294,7 +412,6 @@ try {
         assert.equal(await chat.count(), 0);
         assert.equal(await page.getByText("[object Object]", { exact: true }).count(), 0);
         assert.equal(traffic.subscriptions.length, subscriptionsBefore);
-        const prefix = `${theme}-${locale}`;
         await page.screenshot({
           path: resolve(artifacts, `${prefix}-failure.png`),
           fullPage: true,
