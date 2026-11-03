@@ -167,6 +167,7 @@ type ZCodeSessionRecordParams = (
 ) & { taskType?: SessionTaskType };
 
 interface SessionStartupPreferences {
+  executionEngine: "zcode" | "codex";
   additionalDirectories?: readonly string[];
   subagentRuntimeConfigEnabled?: boolean;
   memoryEnabled: boolean;
@@ -3382,6 +3383,7 @@ async function resolveSessionStartupPreferences(
   if (source.kind === "inherit") {
     const inheritedShellSelection = source.parent.app.runtime.getSessionShellSelection();
     return {
+      executionEngine: source.parent.app.runtime.nativeTurnExecutor ? "codex" : "zcode",
       memoryEnabled: source.parent.memoryEnabled,
       subagentRuntimeConfigEnabled: source.parent.subagentRuntimeConfigEnabled,
       modelContextBudgetStrategy: DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY,
@@ -3404,6 +3406,8 @@ async function resolveSessionStartupPreferences(
     runtimePreferences.askUserQuestionAutoResolutionEnabled,
   );
   return {
+    // 旧 Host 省略时也须显式 ZCode，避免同一 CLI 的实验环境污染项目会话。
+    executionEngine: runtimePreferences.executionEngine ?? "zcode",
     additionalDirectories: runtimePreferences.additionalDirectories,
     subagentRuntimeConfigEnabled: runtimePreferences.subagentRuntimeConfigEnabled,
     memoryEnabled: runtimePreferences.memoryEnabled,
@@ -3498,6 +3502,7 @@ async function createRecord(
   // 用可变持有者做惰性绑定：CronCreate 在 turn 中调用 create() 时 record 早已就绪。
   let ownSessionRecord: ZCodeProtocolSessionRecord | undefined;
   const app = await createWorkspaceZCodeApp(context, workspace, {
+    executionEngine: startupPreferences.executionEngine,
     env: context.deps.env,
     eventStore,
     resume,

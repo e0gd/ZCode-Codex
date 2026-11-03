@@ -2,6 +2,8 @@
 
 Host 项目组织态的持久化升级。调用者持有 app SQLite 连接，CLI 通过协议交接事实，不导入此模块。
 
+`0010_project_execution_engine` 仅为 projects 增加 execution_engine 列，默认 zcode，不改旧迁移内容。引擎创建后不可修改，恢复/复用保留；目录与引擎解析读取同一项目快照。跨引擎移动任务拒绝，同 cwd 不代表同引擎。运行时只消费 Host 按 task 归属派生的 executionEngine，不能按目录推断。旧任务及定义的目录推断只允许选择 ZCode 项目。规格见 docs/specs/project-execution-engine.md。
+
 `hasProjectWorkspace` 只读取当前 Host 的未删除项目 roots 与 task 项目关联，供 Host 首次分配 CLI 使用；软删除项目的保留任务归属仍算项目工作区。默认任务迁移已清空任务归属，其软删容器的残留 roots 不参与分配。该查询不建立或持久化运行归属，不改 task.cwd，也不在移动任务时触发进程迁移。运行归属由 ProcessManager 保持到原进程退出。
 
 - `0005_projects`（旧 ID `0001_projects`）首次迁移旧 settings 中保留的 workspace；不删除或改写旧列语义、不移动目录。

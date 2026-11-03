@@ -55,6 +55,80 @@ describe("虚拟项目", () => {
       actions.setLocale("zh-CN");
     });
   });
+  it("PE01：项目引擎默认 ZCode，同目录 Codex 项目独立保存且编辑和刷新后固定", async function () {
+    this.timeout(120_000);
+    const testHome = process.env.ZCODE_E2E_HOME_DIR;
+    if (!testHome) throw new Error("隔离 HOME required");
+    const marker = `E2E_PROJECT_ENGINE_${Date.now()}`;
+    const root = join(DEFAULT_WORKSPACE, ".zcode-e2e", marker);
+    await mkdir(root, { recursive: true });
+    const projectIds: string[] = [];
+    for (const engine of ["zcode", "codex"] as const) {
+      await openLocalProjectEditor();
+      const selector = $('[data-testid="virtual-project-engine"]');
+      expect(await selector.getText()).toBe("ZCode");
+      expect(await selector.getAttribute("data-engine")).toBe("zcode");
+      if (engine === "codex") {
+        await selector.click();
+        await $('[role="option"][data-engine="codex"]').click();
+        const description = $('[data-testid="virtual-project-engine-description"]');
+        expect(await description.getText()).toContain("单独安装");
+        expect(await description.getText()).toContain("ZCode");
+        expect(await description.getText()).toContain("OpenAI Responses");
+      }
+      await $('[data-testid="virtual-project-name"]').setValue(`${marker}_${engine}`);
+      await chooseProjectRoot(root);
+      await $('[data-testid="virtual-project-save"]').click();
+      await $('[data-testid="project-folder-trust-confirm"]').waitForClickable();
+      await $('[data-testid="project-folder-trust-confirm"]').click();
+      const project = $(`[data-project-name="${marker}_${engine}"]`);
+      await project.waitForDisplayed();
+      const projectId = await project.getAttribute("data-project-id");
+      if (!projectId) throw new Error("Created project is missing its persisted identity");
+      projectIds.push(projectId);
+      await project.$('[data-testid="virtual-project-row"]').click({ button: "right" });
+      await $('[data-testid="virtual-project-edit"]').click();
+      const fixed = $('[data-testid="virtual-project-engine"]');
+      expect(await fixed.getAttribute("readonly")).not.toBeNull();
+      expect(await fixed.getAttribute("data-engine")).toBe(engine);
+      expect(await fixed.getValue()).toBe(engine === "codex" ? "Codex" : "ZCode");
+      await $('[data-testid="virtual-project-save"]').click();
+      await $('[role="dialog"]').waitForExist({ reverse: true });
+    }
+    expect(projectIds[0]).not.toBe(projectIds[1]);
+    // 只读所属 Host 的真实项目数据库，不用 UI 草稿或伪造消息证明持久化。
+    const db = new DatabaseSync(join(testHome, ".zcode/v2/tasks-index.sqlite"), {
+      readOnly: true,
+    });
+    try {
+      for (const [index, engine] of ["zcode", "codex"].entries()) {
+        const project = db
+          .prepare("SELECT execution_engine FROM projects WHERE project_id=?")
+          .get(projectIds[index]!) as { execution_engine: string };
+        expect(project.execution_engine).toBe(engine);
+      }
+    } finally {
+      db.close();
+    }
+    await browser.refresh();
+    await prepareV4ConversationE2E({ skipProvider: true });
+    const codexProject = $(`[data-project-name="${marker}_codex"]`);
+    await codexProject.waitForDisplayed({ timeout: 30_000 });
+    await codexProject.$('[data-testid="virtual-project-row"]').click({ button: "right" });
+    await $('[data-testid="virtual-project-edit"]').click();
+    expect(await $('[data-testid="virtual-project-engine"]').getValue()).toBe("Codex");
+    expect(
+      await $('[data-testid="virtual-project-engine"]').getAttribute("readonly"),
+    ).not.toBeNull();
+    await browser.keys("Escape");
+    await $('[role="dialog"]').waitForExist({ reverse: true });
+    await openLocalProjectEditor();
+    expect(await $('[data-testid="virtual-project-engine"]').getAttribute("data-engine")).toBe(
+      "zcode",
+    );
+    await browser.keys("Escape");
+    await $('[role="dialog"]').waitForExist({ reverse: true });
+  });
   it("VP19/20：直接创建表单、源文件夹布局、旧分区折叠与 hover 入口", async function () {
     this.timeout(60_000);
     await openWorkspaceDraftFromSidebar(DEFAULT_WORKSPACE);

@@ -98,7 +98,7 @@ CREATE TABLE projects (
  project_id TEXT PRIMARY KEY, host_id TEXT NOT NULL REFERENCES hosts(host_id), name TEXT NOT NULL,
  name_overridden INTEGER NOT NULL DEFAULT 0, position INTEGER NOT NULL, pinned INTEGER NOT NULL DEFAULT 0,
  pinned_at INTEGER, deleted INTEGER NOT NULL DEFAULT 0, deleted_at INTEGER,
- created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+ created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, execution_engine TEXT NOT NULL DEFAULT 'zcode');
 
 CREATE TABLE remote_project_entries (
  entry_id TEXT PRIMARY KEY, host_id TEXT NOT NULL REFERENCES hosts(host_id) ON DELETE CASCADE,

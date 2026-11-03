@@ -3828,6 +3828,7 @@ describe("ZCodeProtocolAgentServer", () => {
         version: "test-version",
       });
       const preferenceRequests = attachSessionRuntimePreferencesResponder(server, () => ({
+        executionEngine: "codex",
         nativeSearchEnhancementsEnabled: false,
         toolSearchMode: "auto",
         memoryEnabled: false,
@@ -3841,12 +3842,41 @@ describe("ZCodeProtocolAgentServer", () => {
       });
 
       expect(preferenceRequests).toHaveLength(1);
+      expect(createdAppOptions[0]?.executionEngine).toBe("codex");
       expect(createdAppOptions[0]?.runtimeConfig?.toolSearch).toEqual({ mode: "auto" });
       expect(createdAppOptions[0]?.runtimeConfig?.nativeSearchEnhancementsEnabled).toBe(false);
       expect(createdAppOptions[0]?.runtimeConfig?.memory?.enabled).toBe(false);
       expect(createdAppOptions[0]?.runtimeConfig?.modelContextBudgetStrategy).toBe("preflight-v1");
     } finally {
       await store.close();
+    }
+  });
+
+  it("freezes each same-directory session's engine from trusted Host preferences", async () => {
+    const createdAppOptions: ZCodeAppOptions[] = [];
+    const server = new ZCodeProtocolAgentServer({
+      createZCodeApp: (options) => {
+        createdAppOptions.push(options);
+        return createFakeApp(options);
+      },
+      cwd: workspace.workspacePath,
+    });
+    let executionEngine: "zcode" | "codex" = "codex";
+    const requests = attachSessionRuntimePreferencesResponder(server, () => ({
+      executionEngine,
+      nativeSearchEnhancementsEnabled: true,
+    }));
+    try {
+      const first = zcodeSessionStateSnapshotSchema.parse(await requestResult(server, {
+        id: 1, method: zcodeProtocolMethods.sessionCreate, params: { workspace },
+      }));
+      executionEngine = "zcode";
+      await requestResult(server, { id: 2, method: zcodeProtocolMethods.sessionCreate, params: { workspace } });
+      await requestResult(server, { id: 3, method: zcodeProtocolMethods.sessionResume, params: { sessionId: first.session.sessionId, workspace } });
+      expect(createdAppOptions.map(options => options.executionEngine)).toEqual(["codex", "zcode"]);
+      expect(requests).toHaveLength(2);
+    } finally {
+      await server.shutdown();
     }
   });
 
@@ -7454,7 +7484,7 @@ describe("ZCodeProtocolAgentServer", () => {
     ]);
   });
 
-  it("forks sessions and lets selection children inherit parent runtime preferences", async () => {
+  it.each(["zcode", "codex"] as const)("forks sessions and lets selection children inherit parent runtime preferences (%s)", async (executionEngine) => {
     const store = await createSqliteSessionStore({ dbPath: ":memory:" });
     const forkTargets: Array<{ targetCheckpointId?: string; targetMessageId?: string }> = [];
     const createdAppOptions: ZCodeAppOptions[] = [];
@@ -7500,6 +7530,7 @@ describe("ZCodeProtocolAgentServer", () => {
             readTarget: async () => await store.readTarget({ sessionID: app.sessionId }),
             runtime: {
               ...app.runtime,
+              nativeTurnExecutor: executionEngine === "codex" ? { execute: vi.fn() } : undefined,
               createSelectionSideConversation: async () => {
                 if (!(await store.getSession(selectionChildId))) {
                   await store.createSession({
@@ -7539,6 +7570,7 @@ describe("ZCodeProtocolAgentServer", () => {
       });
       let toolSearchMode: "local" | "off" = "local";
       const preferenceRequests = attachSessionRuntimePreferencesResponder(server, () => ({
+        executionEngine,
         nativeSearchEnhancementsEnabled: false,
         toolSearchMode,
         memoryEnabled: false,
@@ -7632,6 +7664,8 @@ describe("ZCodeProtocolAgentServer", () => {
         thoughtLevel: { current: "deep" },
       });
       expect(createdAppOptions).toHaveLength(2);
+      expect(createdAppOptions[0]?.executionEngine).toBe(executionEngine);
+      expect(createdAppOptions[1]?.executionEngine).toBe(executionEngine);
       expect(createdAppOptions[1]?.readSubagentRuntimeConfig).toBeTypeOf("function");
       expect(preferenceRequests).toHaveLength(1);
       expect(createdAppOptions[1]?.runtimeConfig?.toolSearch).toEqual({ mode: "local" });
@@ -7673,6 +7707,7 @@ describe("ZCodeProtocolAgentServer", () => {
         },
       });
       expect(createdAppOptions).toHaveLength(3);
+      expect(createdAppOptions[2]?.executionEngine).toBe(executionEngine);
       expect(createdAppOptions[2]?.readSubagentRuntimeConfig).toBeTypeOf("function");
       expect(preferenceRequests).toHaveLength(1);
       expect(createdAppOptions[2]?.runtimeConfig?.toolSearch).toEqual({ mode: "local" });
@@ -8008,6 +8043,7 @@ function setTestNotificationSink(
 function attachSessionRuntimePreferencesResponder(
   server: ZCodeProtocolAgentServer,
   resolvePreferences: (scope: "runtime-materialization" | "user-execution") => {
+    executionEngine?: "zcode" | "codex";
     nativeSearchEnhancementsEnabled: boolean;
     toolSearchMode?: "auto" | "local" | "off";
     memoryEnabled?: boolean;

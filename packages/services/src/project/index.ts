@@ -106,6 +106,7 @@ const saveProjectSchema = z
     roots: z.array(z.string().min(1)).optional(),
     primaryRoot: z.string().min(1).optional(),
     pinned: z.boolean().optional(),
+    executionEngine: z.enum(["zcode", "codex"]).optional(),
   })
   .strict()
   .refine(
@@ -296,7 +297,12 @@ export function createProjectService(options: {
           if (params?.reuseDraft) {
             if (!(await stat(path)).isDirectory()) throw new Error("project.directory-required");
           } else await mkdir(path, { recursive: true });
-          return { workspacePath: path, additionalDirectories: [], projectId: null };
+          return {
+            workspacePath: path,
+            additionalDirectories: [],
+            projectId: null,
+            executionEngine: "zcode",
+          };
         }
         const repo = await options.repository();
         // 新建只需要项目目录；读取全量历史任务会阻塞草稿导航，复检也使用同一项目限定读取。
@@ -335,6 +341,7 @@ export function createProjectService(options: {
         return {
           projectId: id,
           workspacePath,
+          executionEngine: project.executionEngine ?? "zcode",
           additionalDirectories: project.roots
             .map((root) => root.rootPath)
             .filter((path) => path !== workspacePath),

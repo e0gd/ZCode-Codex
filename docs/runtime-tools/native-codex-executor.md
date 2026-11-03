@@ -1,6 +1,6 @@
 # Native Codex execution
 
-An explicitly configured exact local workspace may execute turns through the official Codex app-server. Other workspaces retain their existing engine. This is an execution backend, not a model provider: opted-in turns must never enter ZCode model creation, model loops, title generation or memory-model requests.
+A project's immutable execution-engine setting selects ZCode (default) or the official Codex app-server for its sessions. The Host derives it from authoritative task/project membership through the existing runtime preferences request; same-directory projects remain independent. See [project engine selection](../specs/project-execution-engine.md). The exact-workspace environment opt-in remains a standalone compatibility path only. This is an execution backend, not a model provider: Codex turns must never enter ZCode model creation, model loops, title generation or memory-model requests.
 
 The existing ZCode runtime remains the sole owner of accepted inputs, queue admission, foreground execution cancellation, event persistence and v4 projections. The Codex adapter owns its child process, JSON-RPC request correlation and durable mapping from ZCode session ID to Codex thread ID. A resumed session reuses its mapped thread; failures must not silently fork a new thread. Configuration selects an exact canonical workspace path, never a directory basename.
 

@@ -275,6 +275,15 @@ const enUS: Record<string, string> = {
   "project.description":
     "Group folders on the same host. Existing tasks keep their working directory.",
   "project.name": "Project name",
+  "project.engine": "Execution engine",
+  "project.engineImmutable": "A project's engine cannot be changed after creation. Create a new project instead.",
+  "project.engineMismatch": "This conversation cannot be moved to a project with a different execution engine.",
+  "project.engineZcode": "ZCode",
+  "project.engineCodex": "Codex",
+  "project.engineDescription":
+    "The engine is fixed when the project is created. All sessions in this project use it.",
+  "project.engineCodexDescription":
+    "Install Codex separately. It uses the API provider configured in ZCode and currently supports OpenAI Responses with an API key.",
   "project.folders": "Source folders",
   "project.primary": "Primary folder",
   "project.primaryBadge": "Primary",

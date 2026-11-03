@@ -3,7 +3,10 @@ export interface ProjectRoot {
   position: number;
   isPrimary: boolean;
 }
+export type ProjectExecutionEngine = "zcode" | "codex";
 export interface VirtualProject {
+  /** 创建后固定；旧 Host 未返回时按 ZCode 处理。 */
+  executionEngine?: ProjectExecutionEngine;
   /** 所属 Host 异步探测的只读投影，不写入项目数据库或远端入口缓存；旧 Server 可省略。 */
   primaryRootStatus?: "available" | "missing" | "unavailable";
   /** 旧 Server 的只读单 root 投影，不是本机持久化项目。 */
@@ -42,6 +45,7 @@ export interface ProjectTree {
 
 export const LEGACY_SINGLE_ROOT_PROJECT_PREFIX = "legacy-single-root:";
 export interface SaveProjectInput {
+  executionEngine?: ProjectExecutionEngine;
   /** 显式本地单目录打开：同事务复用未删除项目或创建，不修改匹配项目。 */
   reuseExistingRoot?: boolean;
   id?: string;
@@ -54,6 +58,7 @@ export interface SaveProjectInput {
   restoreProjectId?: string;
 }
 export interface ProjectDirectories {
+  executionEngine?: ProjectExecutionEngine;
   workspacePath: string;
   /** 远端装配层登记后的 attachment 身份；执行仍使用 workspacePath。 */
   workspaceIdentity?: string;

@@ -19,6 +19,7 @@ import {
   REMOTE_ENTRY_DELETED_CACHE_SQL,
   SESSION_CREATION_COMMANDS_SQL,
   TASK_PROJECT_COLUMNS,
+  PROJECT_EXECUTION_ENGINE_SQL,
 } from "#src/project-storage/schema.js";
 
 export type {
@@ -79,6 +80,12 @@ export const projectStorage: ProjectStorageContract = {
           appVersion: "3.16.3",
           touchedTables: ["session_creation_commands"],
           sql: SESSION_CREATION_COMMANDS_SQL,
+        },
+        {
+          id: "0010_project_execution_engine",
+          appVersion: "3.17.1",
+          touchedTables: ["projects"],
+          sql: PROJECT_EXECUTION_ENGINE_SQL,
         },
       ],
       {

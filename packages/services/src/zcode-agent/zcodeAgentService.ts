@@ -1118,7 +1118,13 @@ interface CreateZCodeAgentServiceBaseOptions extends Omit<
       additionalDirectories?: string[];
     },
   ) => Promise<{ sessionId: string; additionalDirectories: string[] }>;
-  resolveSessionDirectories?: (target: ZCodeAgentSessionTarget) => Promise<string[]>;
+  resolveSessionDirectories?: (target: ZCodeAgentSessionTarget) => Promise<
+    | string[]
+    | {
+        additionalDirectories: string[];
+        executionEngine?: "zcode" | "codex";
+      }
+  >;
   resolveSessionRuntimePreferences?: (
     scope: ZCodeSessionRuntimePreferencesScope,
   ) => Promise<ZCodeSessionRuntimePreferencesResult>;
@@ -2866,13 +2872,13 @@ export function createZCodeAgentService(
                     memoryEnabled: false,
                   },
                 );
-                if (
-                  parsed.data.scope === "runtime-materialization" &&
-                  options?.resolveSessionDirectories
-                ) {
-                  preferences.additionalDirectories = await resolveSessionDirectories(
-                    { ...workspace, sessionId: parsed.data.sessionId },
-                    parsed.data.directorySessionId,
+                if (parsed.data.scope === "runtime-materialization") {
+                  Object.assign(
+                    preferences,
+                    await resolveSessionDirectoryPreferences(
+                      { ...workspace, sessionId: parsed.data.sessionId },
+                      parsed.data.directorySessionId,
+                    ),
                   );
                 }
                 // 修复：这里曾按 workspace 身份排除远程。R3 远端 Core 也走本分支，它的 workspace 都是远端身份，
@@ -3702,11 +3708,31 @@ export function createZCodeAgentService(
     return false;
   }
 
+  async function resolveSessionDirectoryPreferences(
+    target: ZCodeAgentSessionTarget,
+    directorySessionId = target.sessionId,
+  ): Promise<
+    Pick<ZCodeSessionRuntimePreferencesResult, "additionalDirectories" | "executionEngine">
+  > {
+    const resolved = await options?.resolveSessionDirectories?.({
+      ...target,
+      sessionId: directorySessionId,
+    });
+    // 目录和引擎来自同一项目快照；旧嵌入调用只返回目录时仍使用默认 ZCode。
+    return Array.isArray(resolved)
+      ? { additionalDirectories: resolved, executionEngine: "zcode" }
+      : {
+          additionalDirectories: resolved?.additionalDirectories,
+          executionEngine: resolved?.executionEngine ?? "zcode",
+        };
+  }
+
   async function resolveSessionDirectories(
     target: ZCodeAgentSessionTarget,
     directorySessionId = target.sessionId,
   ): Promise<string[] | undefined> {
-    return options?.resolveSessionDirectories?.({ ...target, sessionId: directorySessionId });
+    return (await resolveSessionDirectoryPreferences(target, directorySessionId))
+      .additionalDirectories;
   }
 
   async function readSessionDirectories(
@@ -6128,13 +6154,13 @@ export function createZCodeAgentService(
           params.resolution.preferences,
         );
         // 远端组织态由远端 Host 读取；客户端设置回包不能覆盖本机目录事实。
-        if (
-          pending.request.scope === "runtime-materialization" &&
-          options?.resolveSessionDirectories
-        ) {
-          preferences.additionalDirectories = await resolveSessionDirectories(
-            { ...pending.workspace, sessionId: pending.request.sessionId },
-            pending.request.directorySessionId,
+        if (pending.request.scope === "runtime-materialization") {
+          Object.assign(
+            preferences,
+            await resolveSessionDirectoryPreferences(
+              { ...pending.workspace, sessionId: pending.request.sessionId },
+              pending.request.directorySessionId,
+            ),
           );
         }
       } catch (error) {

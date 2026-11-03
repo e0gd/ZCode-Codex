@@ -26,6 +26,7 @@ import {
 } from "#src/project-storage/remote-policy.js";
 
 const executionDirectoriesSchema = z.array(z.string().min(1)).max(256);
+const executionEngineSchema = z.enum(["zcode", "codex"]);
 
 function transaction<T>(db: DatabaseSync, body: () => T, write = true): T {
   db.exec(write ? "BEGIN IMMEDIATE" : "BEGIN");
@@ -51,6 +52,7 @@ function readProjects(db: DatabaseSync, includeDeleted = true): VirtualProject[]
     )
     .all()
     .map((row) => ({
+      executionEngine: executionEngineSchema.parse(row.execution_engine ?? "zcode"),
       id: String(row.project_id),
       hostId: String(row.host_id),
       name: String(row.name),
@@ -110,6 +112,7 @@ function resolveDirectories(
   return {
     workspacePath,
     projectId: project?.id ?? null,
+    executionEngine: project?.executionEngine ?? "zcode",
     additionalDirectories:
       typeof row?.execution_directories === "string"
         ? executionDirectoriesSchema.parse(JSON.parse(row.execution_directories))
@@ -241,6 +244,11 @@ export class ProjectRepository implements ProjectRepositoryContract, ProjectData
       const hostId = this.ownerHostId ?? "local";
       if (old && old.hostId !== hostId) throw new Error("project.cross-host-move");
       if (input.hostId && input.hostId !== hostId) throw new Error("project.host-immutable");
+      const executionEngine = executionEngineSchema.parse(
+        input.executionEngine ?? old?.executionEngine ?? "zcode",
+      );
+      if (old && executionEngine !== (old.executionEngine ?? "zcode"))
+        throw new Error("project.engineImmutable");
       const roots = [...new Set(input.roots ?? old?.roots.map((root) => root.rootPath) ?? [])];
       assertRemoteProjectRoots(this.ownerHostId, roots, old);
       if (input.reuseExistingRoot) {
@@ -291,8 +299,8 @@ export class ProjectRepository implements ProjectRepositoryContract, ProjectData
       const now = Date.now();
       // 原先用 max(position)+1 导致新建项目落在末尾；同一 Host 写事务内取最小值减一，保留已有顺序。
       this.db
-        .prepare(`INSERT INTO projects(project_id,host_id,name,name_overridden,position,pinned,pinned_at,created_at,updated_at)
-        VALUES(?,?,?,?,(SELECT coalesce(min(position),1)-1 FROM projects WHERE host_id=?),?,?,?,?)
+        .prepare(`INSERT INTO projects(project_id,host_id,name,name_overridden,position,pinned,pinned_at,created_at,updated_at,execution_engine)
+        VALUES(?,?,?,?,(SELECT coalesce(min(position),1)-1 FROM projects WHERE host_id=?),?,?,?,?,?)
         ON CONFLICT(project_id) DO UPDATE SET name=excluded.name,name_overridden=excluded.name_overridden,
         pinned=excluded.pinned,pinned_at=excluded.pinned_at,deleted=0,deleted_at=NULL,updated_at=excluded.updated_at`)
         .run(
@@ -305,6 +313,7 @@ export class ProjectRepository implements ProjectRepositoryContract, ProjectData
           (input.pinned ?? old?.pinned) ? now : null,
           now,
           now,
+          executionEngine,
         );
       this.db.prepare("DELETE FROM project_roots WHERE project_id=?").run(id);
       roots.forEach((root, position) =>
@@ -444,6 +453,10 @@ export class ProjectRepository implements ProjectRepositoryContract, ProjectData
       if (!task) throw new Error("project.task-not-found");
       if (project.hostId !== (this.ownerHostId ?? "local") || task.host_id !== project.hostId)
         throw new Error("project.cross-host-move");
+      const source = task.project_id ? requireProject(this.db, String(task.project_id)) : null;
+      // 项目整理不能改变已存在会话的执行引擎；同 cwd 的项目仍按 task 归属区分。
+      if ((source?.executionEngine ?? "zcode") !== (project.executionEngine ?? "zcode"))
+        throw new Error("project.engineMismatch");
       assertRemoteTaskDirectories(this.ownerHostId, project, String(task.root_path));
       if (!project.roots.some((root) => root.rootPath === task.root_path)) {
         if (!input.addMissingRoot) throw new Error("project.root-confirmation-required");

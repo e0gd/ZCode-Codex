@@ -35,10 +35,15 @@ export function uniqueRootProject(
   rootPath: string,
 ): string | null {
   const projects = db
-    .prepare(`SELECT p.project_id FROM projects p JOIN project_roots r USING(project_id)
-    WHERE p.host_id=? AND p.deleted=0 AND r.root_path=? LIMIT 2`)
-    .all(hostId, rootPath) as { project_id: string }[];
-  return projects.length === 1 ? projects[0]!.project_id : null;
+    .prepare(`SELECT p.* FROM projects p JOIN project_roots r USING(project_id)
+    WHERE p.host_id=? AND p.deleted=0 AND r.root_path=?`)
+    .all(hostId, rootPath) as { project_id: string; execution_engine?: string }[];
+  // 晚到的旧任务只有 cwd，不能因当前唯一项目选择 Codex 而切换历史引擎。
+  // 0005 迁移也复用此函数，当时尚无引擎列，缺失列仍按旧 ZCode 语义处理。
+  const candidates = projects.filter(
+    (project) => (project.execution_engine ?? "zcode") === "zcode",
+  );
+  return candidates.length === 1 ? candidates[0]!.project_id : null;
 }
 
 export function initializeLegacyTaskIdentity(

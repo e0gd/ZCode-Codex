@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, open, readFile, realpath, rename, rm } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { constants } from "node:fs";
+import { access, mkdir, open, readFile, realpath, rename, rm, stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ModelSelection, NativeCodexModelConfig, NativeCodexModelResolver, NativeCodexReasoningEffort, NativeTurnApproval, NativeTurnEvent, NativeTurnExecutor } from "@zcode/contracts";
 import type { Provider, ProviderModel } from "@zcode/provider";
 import { compileModelOptionMap } from "@zcode/model-option-map";
@@ -368,13 +370,125 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
   }
 }
 
-/** Synchronous opt-in selection; all filesystem/process work remains in execute. */
-export function createNativeCodexExecutorFromEnv(workspacePath: string, env: NodeJS.ProcessEnv = process.env, resolveModel?: NativeCodexModelResolver): NativeTurnExecutor | undefined {
-  const selected = env.ZCODE_CODEX_WORKSPACE;
-  if (!selected || pathKey(selected) !== pathKey(workspacePath)) return undefined;
-  if (!isAbsolute(selected) || !env.ZCODE_CODEX_BINARY || !isAbsolute(env.ZCODE_CODEX_BINARY) || !env.CODEX_HOME || !isAbsolute(env.CODEX_HOME)) {
-    throw new Error("Native Codex requires absolute ZCODE_CODEX_WORKSPACE, ZCODE_CODEX_BINARY and CODEX_HOME paths.");
+export interface NativeCodexDiscoveryOptions {
+  env?: NodeJS.ProcessEnv;
+  binaryPath?: string;
+  platform?: NodeJS.Platform;
+  arch?: string;
+}
+
+function environmentValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  if (env[name] !== undefined) return env[name];
+  const key = Object.keys(env).find(key => key.toUpperCase() === name);
+  return key === undefined ? undefined : env[key];
+}
+
+async function executablePath(candidate: string, platform: NodeJS.Platform): Promise<string | undefined> {
+  if (!isAbsolute(candidate) || /\.(?:cmd|bat|ps1)$/iu.test(candidate)) return undefined;
+  if (platform === "win32" && ![".exe", ".com"].includes(extname(candidate).toLowerCase())) return undefined;
+  try {
+    if (!(await stat(candidate)).isFile()) return undefined;
+    if (platform !== "win32") await access(candidate, constants.X_OK);
+    const canonical = await realpath(candidate);
+    if (platform === "win32" && ![".exe", ".com"].includes(extname(canonical).toLowerCase())) return undefined;
+    return canonical;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES" || code === "EPERM") return undefined;
+    throw error;
   }
+}
+
+function vendorBinaries(root: string, target: string, fileName: string): string[] {
+  return ["codex", "bin"].map(directory => join(root, "vendor", target, directory, fileName));
+}
+
+/** Read-only, bounded local discovery; never run npm, a shell wrapper, or a workspace command. */
+export async function discoverNativeCodexBinary(options: NativeCodexDiscoveryOptions = {}): Promise<string> {
+  const env = options.env ?? process.env;
+  const platform = options.platform ?? process.platform;
+  const arch = options.arch ?? process.arch;
+  const override = options.binaryPath ?? env.ZCODE_CODEX_BINARY;
+  if (override !== undefined) {
+    const found = await executablePath(override, platform);
+    if (!found) throw new Error("ZCODE_CODEX_BINARY must point to an existing absolute native executable; shell wrappers are unsupported.");
+    return found;
+  }
+  const architecture = arch === "x64" ? "x86_64" : arch === "arm64" ? "aarch64" : undefined;
+  const system = platform === "win32" ? "pc-windows-msvc" : platform === "darwin" ? "apple-darwin" : platform === "linux" ? "unknown-linux-musl" : undefined;
+  if (!architecture || !system) throw new Error("The installed Codex discovery does not support this operating system or architecture; configure ZCODE_CODEX_BINARY explicitly.");
+  const target = `${architecture}-${system}`;
+  const fileName = platform === "win32" ? "codex.exe" : "codex";
+  const paths = (environmentValue(env, "PATH") ?? "").split(platform === "win32" ? ";" : ":")
+    .map(entry => entry.replace(/^"|"$/gu, ""))
+    .filter(entry => isAbsolute(entry));
+  const candidates: string[] = [];
+  for (const directory of paths) {
+    candidates.push(join(directory, fileName));
+    const packageRoots = [
+      join(directory, "node_modules", "@openai"),
+      join(directory, "..", "lib", "node_modules", "@openai"),
+    ];
+    for (const packages of packageRoots) {
+      const core = join(packages, "codex");
+      const platformPackage = `codex-${platform}-${arch}`;
+      candidates.push(...vendorBinaries(core, target, fileName));
+      candidates.push(...vendorBinaries(join(packages, platformPackage), target, fileName));
+      candidates.push(...vendorBinaries(join(core, "node_modules", "@openai", platformPackage), target, fileName));
+    }
+  }
+  if (platform === "win32") {
+    const localAppData = environmentValue(env, "LOCALAPPDATA");
+    if (localAppData && isAbsolute(localAppData)) {
+      const installed = join(localAppData, "Programs", "Codex");
+      candidates.push(...vendorBinaries(join(installed, "package"), target, fileName));
+      candidates.push(join(installed, "resources", fileName));
+    }
+  }
+  for (const candidate of new Set(candidates)) {
+    const found = await executablePath(candidate, platform);
+    if (found) return found;
+  }
+  throw new Error("Codex executable was not found. Install the official Codex CLI and add it to PATH, or configure ZCODE_CODEX_BINARY.");
+}
+
+export interface NativeCodexProjectOptions {
+  workspacePath: string;
+  env?: NodeJS.ProcessEnv;
+  binaryPath?: string;
+  codexHome?: string;
+  resolveModel?: NativeCodexModelResolver;
+}
+
+/** Project-authoritative selection; ordinary CODEX_HOME belongs to the user's separate Codex installation. */
+export async function createNativeCodexExecutor(options: NativeCodexProjectOptions): Promise<NativeTurnExecutor> {
+  const env = options.env ?? process.env;
+  const binaryPath = await discoverNativeCodexBinary({ env, binaryPath: options.binaryPath });
+  const dataBase = env.ZCODE_DATA_BASE_DIR?.trim() || env.HOME?.trim() || env.USERPROFILE?.trim() || homedir();
+  const codexHome = options.codexHome ?? env.ZCODE_CODEX_HOME ?? join(dataBase, ".zcode", "codex-home");
+  if (!isAbsolute(codexHome)) throw new Error("ZCODE_CODEX_HOME must be an absolute independent data directory.");
+  const workspace = await realpath(options.workspacePath);
+  const assertIndependentHome = (home: string) => {
+    const inside = relative(workspace, home);
+    if (!inside || (!inside.startsWith(`..${sep}`) && inside !== ".." && !isAbsolute(inside))) {
+      throw new Error("Native Codex home must be outside the project workspace.");
+    }
+  };
+  assertIndependentHome(resolve(codexHome));
+  await mkdir(codexHome, { recursive: true, mode: 0o700 });
+  const canonicalHome = await realpath(codexHome);
+  assertIndependentHome(canonicalHome);
+  return new NativeCodexExecutor({
+    workspacePath: options.workspacePath,
+    binaryPath,
+    codexHome: canonicalHome,
+    ...(options.resolveModel ? { resolveModel: options.resolveModel } : {}),
+    ...nativeCodexEnvironmentOptions(env),
+    env: { ...env },
+  });
+}
+
+function nativeCodexEnvironmentOptions(env: NodeJS.ProcessEnv): Pick<NativeCodexOptions, "configOverrides" | "skillRoots" | "baseUrl" | "stateDirectory" | "model" | "provider"> {
   const configOverrides = env.ZCODE_CODEX_MCP_OVERRIDES_JSON === undefined
     ? undefined
     : validateMcpOverrides(JSON.parse(env.ZCODE_CODEX_MCP_OVERRIDES_JSON));
@@ -384,14 +498,26 @@ export function createNativeCodexExecutorFromEnv(workspacePath: string, env: Nod
     if (!Array.isArray(parsed) || !parsed.every(root => typeof root === "string" && isAbsolute(root))) throw new Error("ZCODE_CODEX_SKILL_ROOTS must be a JSON array of absolute paths.");
     skillRoots = parsed as string[];
   }
-  return new NativeCodexExecutor({ workspacePath: selected, binaryPath: env.ZCODE_CODEX_BINARY, codexHome: env.CODEX_HOME,
-    ...(resolveModel ? { resolveModel } : {}),
+  return {
     ...(configOverrides ? { configOverrides } : {}),
     ...(skillRoots ? { skillRoots } : {}),
     ...(env.ZCODE_CODEX_BASE_URL ? { baseUrl: env.ZCODE_CODEX_BASE_URL } : {}),
     ...(env.ZCODE_CODEX_STATE_DIR ? { stateDirectory: env.ZCODE_CODEX_STATE_DIR } : {}),
     ...(env.ZCODE_CODEX_MODEL ? { model: env.ZCODE_CODEX_MODEL } : {}),
     ...(env.ZCODE_CODEX_PROVIDER ? { provider: env.ZCODE_CODEX_PROVIDER } : {}),
+  };
+}
+
+/** Synchronous opt-in selection; all filesystem/process work remains in execute. */
+export function createNativeCodexExecutorFromEnv(workspacePath: string, env: NodeJS.ProcessEnv = process.env, resolveModel?: NativeCodexModelResolver): NativeTurnExecutor | undefined {
+  const selected = env.ZCODE_CODEX_WORKSPACE;
+  if (!selected || pathKey(selected) !== pathKey(workspacePath)) return undefined;
+  if (!isAbsolute(selected) || !env.ZCODE_CODEX_BINARY || !isAbsolute(env.ZCODE_CODEX_BINARY) || !env.CODEX_HOME || !isAbsolute(env.CODEX_HOME)) {
+    throw new Error("Native Codex requires absolute ZCODE_CODEX_WORKSPACE, ZCODE_CODEX_BINARY and CODEX_HOME paths.");
+  }
+  return new NativeCodexExecutor({ workspacePath: selected, binaryPath: env.ZCODE_CODEX_BINARY, codexHome: env.CODEX_HOME,
+    ...(resolveModel ? { resolveModel } : {}),
+    ...nativeCodexEnvironmentOptions(env),
     env: { ...env },
   });
 }

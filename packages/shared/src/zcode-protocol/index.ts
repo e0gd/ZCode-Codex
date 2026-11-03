@@ -2141,6 +2141,8 @@ export type ZCodeModelContextBudgetStrategy = z.infer<typeof zcodeModelContextBu
 
 export const zcodeSessionRuntimePreferencesResultSchema = z
   .object({
+    // Host 按任务项目归属派生；旧 Host 省略时使用 ZCode 默认引擎。
+    executionEngine: z.enum(["zcode", "codex"]).optional(),
     additionalDirectories: z.array(nonEmptyString).max(256).optional(),
     nativeSearchEnhancementsEnabled: z.boolean(),
     toolSearchMode: appToolSearchModeSchema.default("off"),

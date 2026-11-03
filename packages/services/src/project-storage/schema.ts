@@ -98,3 +98,7 @@ CREATE TABLE IF NOT EXISTS session_creation_commands (
   session_id TEXT NOT NULL,
   PRIMARY KEY (workspace_key, client_id, command_id)
 );`;
+
+/** 只增加带默认值的列；旧项目及旧客户端创建的项目继续使用 ZCode。 */
+export const PROJECT_EXECUTION_ENGINE_SQL =
+  "ALTER TABLE projects ADD COLUMN execution_engine TEXT NOT NULL DEFAULT 'zcode'";

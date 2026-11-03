@@ -8,6 +8,8 @@ Host projectService 的 readTree 决定行集合、项目归属和 CLI 事实镜
 
 创建经 Host prepareSession 固化 cwd，草稿持有 projectId，首发前由 Host 原子预留归属。选择其他项目会重建尚未提升的预热实例，已提交任务不受影响。拖动只发 moveTask，缺 root 经确认重试，失败保持原树。软删项目保留任务归属；时间线可见；恢复需用户显式选择同 roots 的已删项目。
 
+项目执行引擎由 Host 项目数据库唯一持有。ProjectEditor 仅在新建时持有 executionEngine 草稿，默认 ZCode，可选 Codex；通过同一 saveProject 提交，编辑只读展示，恢复不覆盖原值。旧项目缺字段按 ZCode 展示。所有会话的实际路由由所属 Host/CLI 按项目事实解析，UI 不根据 cwd 或环境变量推导。见 docs/specs/project-execution-engine.md。
+
 桌面和手机共用组件；沿用现有 task 行操作、shared-host attachment、continuous/replayable 传输。CLI 不接收项目 ID。
 
 composer 的“创建项目”复用侧栏 ProjectCreation：当前为远程会话时默认该设备，其余默认本地。项目服务可用即可创建，不能沿用打开原生文件夹的能力门禁。保存只刷新目录，取消不写入，两者不切换项目/工作区或改写聊天草稿。独立设备连接后的创建继续受当前聊天返回资格约束，普通创建不继承该设备。

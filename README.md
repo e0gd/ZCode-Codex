@@ -13,7 +13,7 @@
 
 ZCode 是 AI 编程工作台，提供桌面应用、浏览器界面和终端 Agent。本仓库包含客户端、后端服务、共享 UI，以及 Agent CLI 与运行时源码。
 
-本 Fork 的 `native-codex` 分支提供实验性的官方 Codex 原生执行后端。构建、启用方式和验收边界见 [Native Codex 分支说明](NATIVE_CODEX.md)；当前尚未提供引擎设置界面或完成桌面、手机端到端验收。
+本 Fork 的 `native-codex` 分支提供项目级双引擎：新建项目默认使用 ZCode，也可选择 Codex；保存后引擎固定，旧项目默认 ZCode。Codex 需单独安装，使用 ZCode 中的 API 配置，目前支持 OpenAI Responses 与 API Key，无需配置工作区环境变量。受控源码桌面验收已覆盖同目录双引擎项目、真实会话路由及完整进程重启后两种会话的恢复。标准开发命令构建成功，但隔离启动遇到 ARMS 初始化阻塞，验收使用同一构建直接启动 Electron。CLI 全量测试尚有失败，真实模型服务、手机端和安装打包未验收。详见 [分支说明及验证记录](NATIVE_CODEX.md)。
 
 ## 更新
 

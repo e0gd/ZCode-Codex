@@ -145,6 +145,9 @@ export function ProjectEditor({
     project?.name ?? (fixedFolder ? getPathLeaf(fixedFolder.path) : ""),
   );
   const [nameEdited, setNameEdited] = useState(false);
+  const [executionEngine, setExecutionEngine] = useState<"zcode" | "codex">(
+    project?.executionEngine ?? "zcode",
+  );
   const [roots, setRoots] = useState(
     project?.roots.map((root) => root.rootPath) ??
       (fixedFolder ? [fixedFolder.path] : initialRoots),
@@ -345,6 +348,7 @@ export function ProjectEditor({
         ...(hostId ? { hostId } : {}),
         ...(project ? { id: project.id } : {}),
         ...(restoreProject ? { restoreProjectId: restoreProject.id } : {}),
+        ...(!project && !restoreProject ? { executionEngine } : {}),
         ...(nameEdited ? { name: name.trim() } : {}),
         defaultName: msg("new"),
         roots,
@@ -558,6 +562,56 @@ export function ProjectEditor({
                     ) : null}
                   </div>
                 ) : null}
+                <div className="grid min-w-0 gap-1.5">
+                  <label htmlFor="project-engine" className={FIELD_LABEL}>
+                    {msg("engine")}
+                  </label>
+                  {project ? (
+                    <Input
+                      id="project-engine"
+                      data-testid="virtual-project-engine"
+                      data-engine={executionEngine}
+                      value={msg(executionEngine === "codex" ? "engineCodex" : "engineZcode")}
+                      readOnly
+                      aria-describedby="project-engine-description"
+                      className="h-9 rounded-lg"
+                    />
+                  ) : (
+                    <Select
+                      value={executionEngine}
+                      onValueChange={(value) => {
+                        if (value === "zcode" || value === "codex") setExecutionEngine(value);
+                      }}
+                      disabled={busy || Boolean(created)}
+                    >
+                      <SelectTrigger
+                        id="project-engine"
+                        data-testid="virtual-project-engine"
+                        data-engine={executionEngine}
+                        aria-describedby="project-engine-description"
+                        className="h-9 w-full min-w-0 rounded-lg"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent position="popper" className="w-(--radix-select-trigger-width)">
+                        <SelectItem value="zcode" data-engine="zcode">
+                          {msg("engineZcode")}
+                        </SelectItem>
+                        <SelectItem value="codex" data-engine="codex">
+                          {msg("engineCodex")}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
+                  <p
+                    id="project-engine-description"
+                    data-testid="virtual-project-engine-description"
+                    className="text-ui-sm text-foreground-subtle"
+                  >
+                    {msg("engineDescription")}
+                    {executionEngine === "codex" ? ` ${msg("engineCodexDescription")}` : null}
+                  </p>
+                </div>
                 <fieldset disabled={busy || Boolean(created)} className="min-w-0">
                   <legend className={`mb-1.5 ${FIELD_LABEL}`}>{msg("folders")}</legend>
                   {/* 有目录时使用同一列表的末行添加，只有零目录才展示空态大卡片。 */}

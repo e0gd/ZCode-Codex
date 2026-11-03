@@ -2264,8 +2264,7 @@ export function createLocalServices(options: {
       return { sessionId: prepared.taskId, additionalDirectories: prepared.additionalDirectories };
     },
     resolveSessionDirectories: async (target) =>
-      (await projectService.resolveSessionDirectories({ ...target, taskId: target.sessionId }))
-        .additionalDirectories,
+      projectService.resolveSessionDirectories({ ...target, taskId: target.sessionId }),
     ...(agentAccountProviderConfigSource
       ? { accountProviderConfigSource: agentAccountProviderConfigSource }
       : {}),

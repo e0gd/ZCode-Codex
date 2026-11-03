@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -8,7 +8,7 @@ import type { NativeTurnApproval, NativeTurnEvent } from "@zcode/contracts";
 
 const mock = vi.hoisted(() => ({ spawn: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawn: mock.spawn }));
-import { NativeCodexExecutor, createNativeCodexExecutorFromEnv } from "../src/native-codex/index.js";
+import { NativeCodexExecutor, createNativeCodexExecutor, createNativeCodexExecutorFromEnv, discoverNativeCodexBinary } from "../src/native-codex/index.js";
 
 type Message = { id?: string | number; method?: string; params?: Record<string, unknown>; result?: unknown; error?: unknown };
 const roots: string[] = [];
@@ -64,6 +64,83 @@ function input(overrides: Partial<Parameters<NativeCodexExecutor["execute"]>[0]>
     onEvent: vi.fn(async (_event: NativeTurnEvent) => {}), requestApproval: vi.fn(async () => "deny" as const), ...overrides };
 }
 const activeParams = { threadId: "thread-1", turnId: "turn-1" };
+
+describe("project Codex discovery", () => {
+  async function binary(path: string) {
+    await mkdir(join(path, ".."), { recursive: true });
+    await writeFile(path, "test executable");
+    await chmod(path, 0o700);
+    return await realpath(path);
+  }
+
+  it("uses an explicit native binary and fails for invalid overrides without PATH fallback", async () => {
+    const { root } = await fixture();
+    const installed = await binary(join(root, "installed", process.platform === "win32" ? "codex.exe" : "codex"));
+    expect(await discoverNativeCodexBinary({ env: {}, binaryPath: installed })).toBe(installed);
+    await expect(discoverNativeCodexBinary({ env: { PATH: join(root, "installed") }, binaryPath: join(root, "missing") })).rejects.toThrow("ZCODE_CODEX_BINARY");
+    await expect(discoverNativeCodexBinary({ env: {}, binaryPath: await binary(join(root, "codex.cmd")) })).rejects.toThrow("native executable");
+  });
+
+  it("finds PATH binaries without requiring a workspace environment opt-in", async () => {
+    const { root } = await fixture();
+    const installed = await binary(join(root, "on-path", process.platform === "win32" ? "codex.exe" : "codex"));
+    expect(await discoverNativeCodexBinary({ env: { PATH: join(root, "on-path") } })).toBe(installed);
+    await expect(discoverNativeCodexBinary({ env: { PATH: "" } })).rejects.toThrow("Install the official Codex CLI");
+  });
+
+  it.each(["codex", "codex-win32-x64"])("resolves Windows npm %s vendor layouts without running cmd wrappers", async name => {
+    const { root } = await fixture();
+    const prefix = join(root, "npm prefix");
+    await binary(join(prefix, "codex.cmd"));
+    const installed = await binary(join(prefix, "node_modules", "@openai", name, "vendor", "x86_64-pc-windows-msvc", "codex", "codex.exe"));
+    expect(await discoverNativeCodexBinary({ env: { Path: prefix }, platform: "win32", arch: "x64" })).toBe(installed);
+    expect(mock.spawn).not.toHaveBeenCalled();
+  });
+
+  it("finds the Windows Codex app vendor executable", async () => {
+    const { root } = await fixture();
+    const installed = await binary(join(root, "Programs", "Codex", "package", "vendor", "aarch64-pc-windows-msvc", "bin", "codex.exe"));
+    expect(await discoverNativeCodexBinary({ env: { LOCALAPPDATA: root }, platform: "win32", arch: "arm64" })).toBe(installed);
+  });
+
+  it.each([
+    ["linux", "x64", "x86_64-unknown-linux-musl"],
+    ["darwin", "arm64", "aarch64-apple-darwin"],
+  ] as const)("finds official npm native packages on %s/%s", async (platform, arch, target) => {
+    const { root } = await fixture();
+    const prefix = join(root, "prefix");
+    const installed = await binary(join(prefix, "lib", "node_modules", "@openai", `codex-${platform}-${arch}`, "vendor", target, "bin", "codex"));
+    expect(await discoverNativeCodexBinary({ env: { PATH: join(prefix, "bin") }, platform, arch })).toBe(installed);
+  });
+
+  it("rejects home overrides inside the project and relative binary overrides", async () => {
+    const { root, options } = await fixture();
+    const installed = await binary(join(root, process.platform === "win32" ? "codex.exe" : "codex"));
+    await expect(createNativeCodexExecutor({ workspacePath: options.workspacePath, env: { ZCODE_CODEX_BINARY: installed, ZCODE_CODEX_HOME: join(options.workspacePath, "data") } })).rejects.toThrow("outside the project");
+    expect(await readdir(options.workspacePath)).toEqual([]);
+    await expect(discoverNativeCodexBinary({ env: {}, binaryPath: "codex" })).rejects.toThrow("absolute native executable");
+  });
+
+  it("uses a separate Host data home and ignores the user's default CODEX_HOME", async () => {
+    const remote = server();
+    const { root, options } = await fixture();
+    const installed = await binary(join(root, "codex.exe"));
+    const userHome = join(root, "user-codex");
+    await mkdir(userHome);
+    await writeFile(join(userHome, "config.toml"), "untouched = true\n");
+    const env = { ZCODE_CODEX_BINARY: installed, ZCODE_DATA_BASE_DIR: join(root, "host-data"), CODEX_HOME: userHome };
+    const executor = await createNativeCodexExecutor({ workspacePath: options.workspacePath, env });
+    await executor.execute(input());
+    expect(remote.calls.some(call => call.method === "turn/start")).toBe(true);
+    expect(mock.spawn.mock.calls[0][2].env.CODEX_HOME).toBe(await realpath(join(root, "host-data", ".zcode", "codex-home")));
+    expect(await readFile(join(userHome, "config.toml"), "utf8")).toBe("untouched = true\n");
+    expect(await readdir(userHome)).toEqual(["config.toml"]);
+    const override = join(root, "explicit-home");
+    const second = await createNativeCodexExecutor({ workspacePath: options.workspacePath, env: { ...env, ZCODE_CODEX_HOME: override } });
+    await second.execute(input({ sessionId: "second" }));
+    expect(mock.spawn.mock.calls[1][2].env.CODEX_HOME).toBe(await realpath(override));
+  });
+});
 
 describe("native Codex transport", () => {
   it("forwards compact item identity and lifecycle without adapter-owned dedupe", async () => {

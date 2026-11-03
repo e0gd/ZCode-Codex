@@ -279,6 +279,8 @@ export function formatProjectError(
   formatMessage: (descriptor: { id: string }) => string,
 ): string {
   const code = cause instanceof Error ? cause.message : String(cause);
+  if (code === "project.engineImmutable" || code === "project.engineMismatch")
+    return formatMessage({ id: code });
   if (code === "remote-project.host-removed") return formatMessage({ id: "project.hostRemoved" });
   if (code === "project.connection-unavailable")
     return formatMessage({ id: "project.connectionUnavailable" });

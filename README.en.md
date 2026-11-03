@@ -13,7 +13,7 @@
 
 ZCode is an AI coding workspace with desktop, browser, and terminal interfaces. This repository contains the clients, backend services, shared UI, and Agent CLI and runtime source code.
 
-This fork's `native-codex` branch adds an experimental official Codex execution backend. See [the branch notes](NATIVE_CODEX.md) for building, configuration, and acceptance limits. An engine settings UI and desktop/phone end-to-end acceptance are still pending.
+This fork's `native-codex` branch offers two project engines. New projects default to ZCode; choose Codex at creation to fix the engine for that project's sessions. Existing projects default to ZCode. Install Codex separately; it uses ZCode's API configuration, currently OpenAI Responses with an API key, without workspace environment variables. Controlled source-desktop checks passed same-directory projects, actual routing to both engines, and recovery of both session types after a full process restart. The standard development build passed, but isolated startup stalled in ARMS initialization, so acceptance used the same build launched directly with Electron. Full CLI tests still have failures; live-provider, phone, and installation/packaging acceptance remain open. See [the branch notes and validation record](NATIVE_CODEX.md).
 
 ## Updates
 

@@ -1,6 +1,12 @@
 # Native Codex executor
 
-This CLI integration selects an external execution engine for one explicitly opted-in local workspace. The official Codex app-server owns its complete model/tool loop. ZCode retains its existing command admission, foreground cancellation, session persistence and desktop/mobile event projection. See the [cross-host execution contract](../../../../../docs/runtime-tools/native-codex-executor.md) for ownership, crash reconciliation and acceptance requirements.
+This CLI integration selects the execution engine for each session from its owning project's immutable setting, defaulting to ZCode. The official Codex app-server owns its complete model/tool loop for Codex projects. ZCode retains its existing command admission, foreground cancellation, session persistence and desktop/mobile event projection. See the [project engine specification](../../../../../docs/specs/project-execution-engine.md) and [cross-host execution contract](../../../../../docs/runtime-tools/native-codex-executor.md) for ownership, crash reconciliation and acceptance requirements.
+
+## Project engine selection
+
+The existing Host runtime-materialization preferences response carries the engine resolved from authoritative task/project membership. Bootstrap passes it as a per-session app option; explicit `zcode` disables the native executor even when old environment opt-ins are present. `codex` locates the separately installed official executable and prepares an isolated home without requiring `ZCODE_CODEX_WORKSPACE`. Same-directory projects must remain independent; child session materialization inherits the parent engine. Cold restoration reuses the Host project decision. Missing Codex or incompatible providers fail visibly without falling back. No engine setting is accepted from ordinary sendText payloads and no process-global engine is introduced.
+
+The environment factory below remains a compatibility entry for standalone experiments without a Host-selected engine. It is not the normal project selection path.
 
 ## Configuration and precedence
 
