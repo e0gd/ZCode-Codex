@@ -4,6 +4,8 @@ The repository's manual **Desktop packages** GitHub Actions workflow builds the 
 
 Each job uses the existing `pnpm bundle:desktop` entry, including runtime preparation, desktop/Host/renderer build, packaging and the entry's dependency/size checks. It must not reuse a previously installed desktop archive or copy native assets between operating systems. Production backend configuration and `ZCODE_PREVIEW_IDENTITY=1` produce a Preview application identity that can coexist with the production application. This does not migrate existing user data, rename the application to match the GitHub repository, or isolate it from other Preview installations. Official Codex remains separately installed on the executing computer.
 
+Windows runners must resolve the native System32 `tar.exe` before Git Bash's GNU tar: GNU tar interprets a cross-drive cache path such as `D:/...` as a remote host and fails while extracting bundled npm. Dependency lifecycle scripts run serially to reduce competing native/postinstall work in the hoisted workspace. The initial Linux dependency installation failed with a pnpm temporary-directory rename error; a successful subsequent run is required before claiming Linux packages exist.
+
 Successful jobs upload installers/archives and a SHA256 manifest as Actions artifacts for 14 days. A missing installer is a failure. Failed targets do not prevent independent targets from completing. The workflow does not publish to upstream/CDN feeds, automatically update installed apps, or create a GitHub Release. Published downloads require a separate release containing actual successful artifacts. The initial builds are unsigned and macOS artifacts are not notarized.
 
 ## Run and download
