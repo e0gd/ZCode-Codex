@@ -2,6 +2,8 @@
 
 This experimental branch integrates the official Codex app-server into ZCode while preserving ZCode's native execution. Users work through the ZCode interface and select the execution method per project. The Codex CLI is installed separately and started by ZCode. New projects default to ZCode; selecting Codex applies to every session created or resumed in that project. ZCode continues to own input admission, session persistence, approvals, cancellation, and desktop/mobile projections. Existing projects and conversations without a project default to ZCode.
 
+For desktop project creation, the exact automatic-delegation setting path, and official Web/mobile limitations, see the step-by-step sections in [中文 README](README.md#创建-codex-项目) or [English README](README.en.md#create-a-codex-project). The current official hosted frontend cannot select Codex when creating a project or change this fork's automatic-delegation setting; create the project and configure the executing desktop first, then continue its sessions from Web/mobile. The source Web UI requires its own deployment to expose the added controls.
+
 The branch starts at upstream `a60ba6a7e5a06742270ca605f5d2cc2766afa7e1` (ZCode 3.17.1), preserving its Git history. The migration contains the existing native executor, provider/model selection, approval and transcript fixes, and context-compaction notification handling. It includes the two compaction metadata/recovery changes that were absent from the external patch manifest. Source archives, local launchers, databases, credentials, installed applications, and machine diagnostics are not part of this branch.
 
 ## Build

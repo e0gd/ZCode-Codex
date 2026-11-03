@@ -27,6 +27,37 @@ See [usage and limitations](NATIVE_CODEX.md) and [validation evidence](docs/test
 
 Install the [official Codex CLI](https://github.com/openai/codex) separately, configure a compatible provider and model in ZCode, then select **Execution engine → Codex** when creating a project. Projects using ZCode do not require Codex.
 
+### Create a Codex project
+
+1. Open this fork's desktop client and configure the API provider, API key and model in ZCode. Codex currently requires an OpenAI Responses-compatible configuration.
+2. Open **Create project**, enter the project details and choose its directory.
+3. Change **Execution engine** from the default **ZCode** to **Codex**, then save.
+4. Create a task in that project and send a message. ZCode locates and starts the separately installed official Codex CLI when needed; that project's sessions execute through Codex.
+
+The execution method is fixed after creation. Existing ZCode projects cannot be converted by editing them; create a Codex project instead. Updating the client does not convert old projects.
+
+### Enable parallel Codex subagents
+
+In the modified desktop, open **Settings → Agent capabilities → Subagents → Codex collaboration** and enable **Automatically delegate to subagents**.
+
+It defaults off. Enabling it lets Codex delegate independent work when useful; it does not set a concurrency count or guarantee agents on every turn. With it off, explicit instructions can still request delegation, for example: “Spawn two subagents to review the frontend and backend separately.” The saved setting applies on the **next turn** to Codex sessions executing on that computer, including connected Web/mobile sessions. Click the composer's **robot button** to view background agents and open their read-only child-session details.
+
+### Official Web/mobile limitations
+
+The current `zcode.z.ai/remote/v4` frontend is hosted by the official website. Installing this fork's desktop client does not replace it. Its existing settings page does not gain this fork's new controls.
+
+| Operation | Modified desktop | Current official Web/mobile frontend |
+| --- | --- | --- |
+| Select Codex when creating a project | Available under Execution engine | No branch selector; cannot create a Codex project through that entry |
+| Change an existing project's execution method | Unsupported; fixed at creation | Unsupported |
+| Change automatic Codex delegation | Available under Codex collaboration | No switch; configure it on the executing computer |
+| Continue an existing Codex project's sessions | Supported | Supported when connected to the modified desktop; new tasks inside that project inherit Codex |
+| Use the desktop's saved delegation setting | Applied next turn | Applied next turn without a separate Web setting |
+
+Create the Codex project and save delegation settings **on the desktop first**, then open that project on Web/mobile to continue. The branch's source Web UI includes the new controls, but needs a separate deployment; no hosted modified-Web URL is currently provided.
+
+### Platform packages
+
 | Platform | Source packaging targets | Formats | Branch validation |
 | --- | --- | --- | --- |
 | Windows | x64, arm64 | `.exe` installer | x64 preview installer published; portable runtime validated locally, clean-machine installation awaits acceptance |
