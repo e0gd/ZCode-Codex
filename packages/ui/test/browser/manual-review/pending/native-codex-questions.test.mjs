@@ -20,6 +20,7 @@ import {
   createSessionId,
 } from "../../../../../../apps/zcode-cli/packages/contracts/src/index.ts";
 import { conversationSnapshotSchema } from "@zcode/shared/zcode-protocol-v4";
+import { zcodeProtocolMethods, zcodeUserInputRequestParamsSchema } from "@zcode/shared";
 
 const root = fileURLToPath(new URL("../../../../../../", import.meta.url));
 const entry = "/packages/ui/test/browser/manual-review/pending/native-codex-questions.fixture.tsx";
@@ -87,12 +88,16 @@ for (const width of [390, 1200])
           const registry = new V4InteractionRegistry();
           const broker = createProtocolInteractionBroker({
             v4Interactions: registry,
-            requestClient: (_method, _params, _schema, options) =>
-              new Promise((_resolve, reject) =>
+            requestClient: (method, params, _schema, options) => {
+              // Match the desktop Host boundary before allowing v4 UI responses to win the race.
+              if (method === zcodeProtocolMethods.interactionRequestUserInput)
+                zcodeUserInputRequestParamsSchema.parse(params);
+              return new Promise((_resolve, reject) =>
                 options.signal.addEventListener("abort", () => reject(new Error("RPC cancelled")), {
                   once: true,
                 }),
-              ),
+              );
+            },
           });
           const projection = new ProductProjection(sessionId, "native-question-browser");
           const input = {

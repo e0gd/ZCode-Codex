@@ -168,6 +168,8 @@ Codex `item/tool/requestUserInput` and completed `agentMessage.questions` must p
 
 Native questions use validated `metadata.source=native-codex` inputs. They may have no options (free text), one or more choices, and multiple distinct questions. Existing ordinary AskUserQuestion limits remain unchanged. Secret questions are explicitly rejected until the UI supports secret entry. Native questions do not use the ordinary optional-question automatic-continue timer. Cancel/decline supplies no invented answers; turn cancellation or connection failure settles and removes pending interactions. Invalid/stale identities and malformed answer payloads fail explicitly.
 
+The shared `interaction/requestUserInput` transport must also accept `questions[].options: []`. Desktop Host validates this reverse request even when V4 supplies the visible question and answer, so acceptance must exercise that Host schema before resolving V4. An empty option list means free-text entry; do not inject a fake choice or infer an answer. Ordinary AskUserQuestion tool limits remain enforced by its separate tool schema. A shared Host contract change requires a rebuilt desktop Host; updating only the CLI while reusing the previous app archive leaves the rejection in place.
+
 The isolated Codex child enables `features.default_mode_request_user_input=true`; without this opt-in Codex 0.166.0 advertises the tool but rejects it internally in Default mode before a client can render a question. This changes question availability only; mode, sandbox and approval snapshots stay unchanged.
 
 ```text

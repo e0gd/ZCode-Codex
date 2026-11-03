@@ -2812,7 +2812,8 @@ export const zcodeUserInputQuestionSchema = z
   .object({
     question: nonEmptyString,
     header: nonEmptyString,
-    options: z.array(zcodeUserInputOptionSchema).min(1),
+    // 原生 Codex 的纯文本问题没有选项；Host 反向 RPC 必须与已有自由输入 UI 使用同一契约。
+    options: z.array(zcodeUserInputOptionSchema),
     multiSelect: z.boolean().optional(),
   })
   .strict();

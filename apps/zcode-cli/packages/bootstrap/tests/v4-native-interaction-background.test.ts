@@ -6,6 +6,7 @@
 //   permission 的 allowAlways 映射必须携带 permissionUpdates（持久化规则不丢）。
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CommandEnvelope } from "@zcode/shared/zcode-protocol-v4";
+import { zcodeProtocolMethods, zcodeUserInputRequestParamsSchema } from "@zcode/shared";
 import {
   PROTOCOL_V4_LIMITS,
   WORKFLOW_ARTIFACT_LIMITS,
@@ -818,7 +819,9 @@ function makeBrokerContext(options?: {
 }) {
   const registry = new V4InteractionRegistry();
   const requestClient = vi.fn(
-    (method: string, _params: unknown, _schema: unknown, reqOptions?: { signal?: AbortSignal }) => {
+    (method: string, params: unknown, _schema: unknown, reqOptions?: { signal?: AbortSignal }) => {
+      // Host 会先严格校验反向 RPC；过去只模拟悬空 Promise，漏掉了无选项原生问题被拒绝的真实边界。
+      if (method === zcodeProtocolMethods.interactionRequestUserInput) zcodeUserInputRequestParamsSchema.parse(params);
       if (options?.respond) {
         return options.respond(method);
       }
