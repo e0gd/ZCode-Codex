@@ -10,6 +10,8 @@ Successful jobs upload installers/archives and a SHA256 manifest as Actions arti
 
 The separate manual **Publish desktop preview** workflow promotes one target from an existing run into the existing `v3.17.1-codex.1` prerelease. It downloads only matching artifacts from this repository, verifies their SHA256 manifest, and uploads installers plus a target-specific manifest. It refuses a non-prerelease destination and does not overwrite existing assets. Only this publishing job receives `contents: write`; it does not rebuild, move the release tag, change application update feeds, or install anything. Review the source run before dispatching. This avoids routing large release files through a developer's local network.
 
+It may be dispatched while the source run is still active: it waits up to 30 minutes for the chosen artifact, then fails if the run finishes without it or the wait expires. Missing/failed targets are never published as successful. Windows x64 was packaged locally from the previously validated complete desktop; both macOS architectures were built in run `41642627089` and promoted through checksum-verifying jobs. Linux is retried in run `41645155986`; availability is determined by actual release attachments.
+
 ## Run and download
 
 1. Open this repository's Actions tab and enable Actions for the fork if GitHub requests it.

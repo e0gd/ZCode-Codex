@@ -29,11 +29,13 @@ Install the [official Codex CLI](https://github.com/openai/codex) separately, co
 
 | Platform | Source packaging targets | Formats | Branch validation |
 | --- | --- | --- | --- |
-| Windows | x64, arm64 | `.exe` installer | Complete x64 portable directory built and locally installed; installer flow awaits acceptance |
-| macOS | Apple Silicon arm64, Intel x64 | `.dmg`, `.zip` | Build entry available; branch packages and runtime await validation |
+| Windows | x64, arm64 | `.exe` installer | x64 preview installer published; portable runtime validated locally, clean-machine installation awaits acceptance |
+| macOS | Apple Silicon arm64, Intel x64 | `.dmg`, `.zip` | Both architectures built and published; actual desktop runtime awaits acceptance |
 | Linux | x64, arm64 | `.AppImage`, `.deb`, `.rpm`, `.pkg.tar.zst` | Build entry available; branch packages and runtime await validation |
 
 Download the actual attachments in this fork's [Releases](https://github.com/e0gd/ZCode-Codex/releases). No attachments means no published package; upstream installers do not contain this integration. Source commands appear below under Packaging. Codex is not bundled. To build a Preview application alongside the original while using the production backend, set `ZCODE_ENV=production` and `ZCODE_PREVIEW_IDENTITY=1`. Renaming the repository does not migrate application data or change an existing local installation's independent data.
+
+Current preview: [v3.17.1-codex.1](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.1). The installed application is named **ZCode Preview**. Packages are unsigned and macOS builds are not notarized. Platform-specific SHA256 manifests are included; the release page distinguishes available packages from pending targets.
 
 Use [Actions → Desktop packages](https://github.com/e0gd/ZCode-Codex/actions/workflows/desktop-packages.yml) to manually build Windows x64, macOS arm64/x64 and Linux x64. Successful jobs provide installers and SHA256 manifests as run artifacts. Availability depends on actual job results; see [build and download instructions](docs/testing/desktop-packages.md).
 

@@ -24,7 +24,7 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 35
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -46,6 +46,27 @@ jobs:
           assert.equal(run.repository.full_name, process.env.GH_REPO);
           assert.equal(run.path, '.github/workflows/desktop-packages.yml');
           assert.equal(JSON.parse(readFileSync('/tmp/preview-release.json')).isPrerelease, true);
+          NODE
+      - name: Wait for target artifact
+        run: |
+          node --input-type=module <<'NODE'
+          import { spawnSync } from 'node:child_process';
+          const api = path => {
+            const result = spawnSync('gh', ['api', path], { encoding: 'utf8' });
+            if (result.status !== 0) throw new Error('Unable to inspect package run: ' + result.stderr);
+            return JSON.parse(result.stdout);
+          };
+          const base = 'repos/' + process.env.GH_REPO + '/actions/runs/' + process.env.PACKAGE_RUN_ID;
+          let ready = false;
+          for (let attempt = 0; attempt < 60; attempt++) {
+            const artifacts = api(base + '/artifacts').artifacts;
+            ready = artifacts.some(a => !a.expired && a.name.startsWith('ZCode-Codex-' + process.env.PACKAGE_PLATFORM + '-'));
+            if (ready) break;
+            if (api(base).status === 'completed') throw new Error('Source run completed without this target artifact');
+            console.log('Waiting for ' + process.env.PACKAGE_PLATFORM + ' artifact');
+            await new Promise(resolve => setTimeout(resolve, 30000));
+          }
+          if (!ready) throw new Error('Target artifact wait exceeded 30 minutes');
           NODE
       - uses: actions/download-artifact@v4
         with:
