@@ -58,7 +58,11 @@ jobs:
         shell: pwsh
         run: |
           # Git Bash tar treats D:/ cache paths as remote hosts during npm extraction.
-          "$env:SystemRoot\System32" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          # Keep Git Bash as the shell; putting all of System32 first selects WSL bash.exe.
+          $archiveTools = Join-Path $env:RUNNER_TEMP 'native-archive-tools'
+          New-Item -ItemType Directory -Path $archiveTools -Force | Out-Null
+          Copy-Item -LiteralPath "$env:SystemRoot\System32\tar.exe" -Destination $archiveTools
+          $archiveTools | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Linux packaging dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y rpm libarchive-tools libfuse2t64
