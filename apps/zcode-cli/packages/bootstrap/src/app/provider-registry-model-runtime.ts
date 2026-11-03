@@ -1,5 +1,6 @@
 import type { AiSdkModelAdapter } from "@zcode/adapters/model";
-import type { Model } from "@zcode/contracts";
+import { resolveNativeCodexModelConfig } from "@zcode/adapters/native-codex";
+import type { Model, NativeCodexModelResolver } from "@zcode/contracts";
 import type { AgentRuntimeDeps } from "@zcode/core";
 import {
   type ModelSelection,
@@ -51,6 +52,16 @@ export class ApiProviderModelRuntime {
     const registryModel = this.#registry.getModel(providerId, modelId);
     if (!registryModel) throw new Error("Registry Selection 校验与 Model 索引结果不一致");
     return this.#createRegistryModel(provider, registryModel, target);
+  };
+
+  readonly resolveNativeCodexModel: NativeCodexModelResolver = (selection) => {
+    if (!this.#started) throw new Error("Provider model runtime is not started.");
+    const validation = this.#registry.validateSelection(selection);
+    if (!validation.ok) throw createRegistrySelectionProtocolError(validation);
+    const provider = this.#registry.getProvider(selection.providerId);
+    const model = this.#registry.getModel(selection.providerId, selection.modelId);
+    if (!provider || !model) throw new Error("Native Codex registry lookup does not match the validated selection.");
+    return resolveNativeCodexModelConfig(selection, provider, model);
   };
 
   start(): void {

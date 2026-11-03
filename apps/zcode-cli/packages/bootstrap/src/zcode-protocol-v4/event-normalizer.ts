@@ -109,6 +109,7 @@ export interface CanonicalTurnAttachment extends Omit<AttachmentRef, "ref"> {
 }
 
 export interface CanonicalModelStream {
+  model?: string;
   kind: ModelStreamingPayload["kind"];
   delta: string;
   done: boolean;
@@ -356,6 +357,7 @@ function normalizeModelStreaming(
     placement: { lane: "assistantWork", relation: "withinProductTurn" },
     diagnostics,
     stream: {
+      ...(payload.model ? { model: payload.model } : {}),
       kind: payload.kind,
       delta: payload.delta,
       done: payload.done,

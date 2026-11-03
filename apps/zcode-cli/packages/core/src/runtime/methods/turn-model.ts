@@ -1,5 +1,6 @@
 import {
   ModelRetryBudget,
+  SessionEventType,
   SESSION_ENTRY_MODEL_SELECTION,
   type Model,
   type ModelSelection,
@@ -143,6 +144,26 @@ export async function applySubmissionExecutionState(
   let model = preparedModel;
 
   if (selection) {
+    // 原生循环不创建 ZCode Model；仍复用接纳持久化及选型事件，保证热/冷快照一致。
+    if (runtime.nativeTurnExecutor) {
+      await acceptSubmissionModelSelection(runtime, intent, traceContext, modelExecution);
+      if (modelExecution?.selectionScope !== "execution") {
+        const previousSelection = publishedSelections.get(runtime);
+        if (!sameModelSelection(previousSelection, selection)) {
+          await runtime.appendEvent(runtime.createEvent(SessionEventType.ModelSelected, {
+            modelSelection: cloneModelSelection(selection),
+            effectiveReasoningLevel: selection.options?.reasoningLevel,
+            previousModelSelection: previousSelection ?? null,
+            contextWindow: null,
+          }, traceContext), traceContext);
+          recordPublishedModelSelection(runtime, selection);
+        }
+      }
+      if (intent?.mode !== undefined || intent?.planEnabled !== undefined) {
+        await applyRuntimeExecutionState(runtime, intent, { source: "command", traceContext });
+      }
+      return undefined;
+    }
     model ??= createTurnModel(runtime, {
       selection,
       requestDependencies: modelExecution?.requestDependencies,

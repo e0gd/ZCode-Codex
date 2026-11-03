@@ -173,6 +173,7 @@ export class AgentRuntime {
   private executor: ToolExecutor;
   private hookRunner?: HookRunner;
   private workspaceHookAdmission?: WorkspaceHookRuntimeAdmissionPort;
+  readonly nativeTurnExecutor?: AgentRuntimeDeps["nativeTurnExecutor"];
   private modelFactory: AgentRuntimeDeps["modelFactory"];
   private modelIoDir?: string;
   private providerRuntimeHeadersPort?: AgentRuntimeDeps["providerRuntimeHeadersPort"];
@@ -327,6 +328,7 @@ export class AgentRuntime {
     }
     this.now = deps.now ?? (() => new Date());
     this.isRemoteWorkspace = deps.isRemoteWorkspace ?? (() => false);
+    this.nativeTurnExecutor = deps.nativeTurnExecutor;
     this.modelFactory = deps.modelFactory;
     this.modelIoDir = deps.modelIoDir;
     this.providerRuntimeHeadersPort = deps.providerRuntimeHeadersPort;

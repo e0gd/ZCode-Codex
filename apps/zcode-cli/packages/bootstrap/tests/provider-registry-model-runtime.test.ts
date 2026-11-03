@@ -104,6 +104,45 @@ function captureRuntime(registry: ProviderRegistry) {
 }
 
 describe("ApiProviderModelRuntime", () => {
+  it("resolves native provider credentials and mapped effort from the current registry without creating a Model", () => {
+    const nativeProvider = (id: string, key: string): Provider => ({
+      ...provider(id, createApiKeyProviderConfig({ apiFormat: "openai-responses", apiKey: key, baseURL: `https://${id}.example.test/v1`, models: ["model-a"] })),
+      models: [{ modelId: "model-a", config: new ModelConfig({
+        ...modelConfig().toJSON(),
+        optionSpecs: new ModelOptionSpecsConfig({ reasoningLevel: { values: ["low", "high"], map: '{"reasoning":{"effort":reasoningLevel}}' }, maxOutputTokens: { max: 32000, map: '{}' } }),
+      }) }],
+    });
+    const registry = new ProviderRegistry([nativeProvider("first", "dummy-first")]);
+    const { created, runtime } = captureRuntime(registry);
+    expect(runtime.resolveNativeCodexModel(selection("first"))).toEqual({ modelId: "model-a", baseUrl: "https://first.example.test/v1", apiKey: "dummy-first", reasoningEffort: "high" });
+    registry.replace([nativeProvider("second", "dummy-second")], "selection changed");
+    expect(runtime.resolveNativeCodexModel({ ...selection("second"), options: { reasoningLevel: "low" } })).toMatchObject({ apiKey: "dummy-second", baseUrl: "https://second.example.test/v1", reasoningEffort: "low" });
+    expect(() => runtime.resolveNativeCodexModel(selection("first"))).toThrow("不存在 Provider");
+    expect(() => runtime.resolveNativeCodexModel({ ...selection("second"), options: { reasoningLevel: "unsupported" } })).toThrow("not supported");
+    expect(created).toEqual([]);
+  });
+
+  it.each(["disabled", "low", "high", "xhigh"])("resolves exact configured Responses map for %s", level => {
+    const responses = provider("mapped", createApiKeyProviderConfig({ apiFormat: "openai-responses", apiKey: "dummy", baseURL: "https://mapped.example.test/v1", models: ["model-a"] }));
+    const map = 'reasoningLevel == "disabled" ? {} : {"reasoning":{"effort":reasoningLevel == "high" ? "xhigh" : reasoningLevel}}';
+    const config = new ModelConfig({ ...modelConfig().toJSON(), optionSpecs: new ModelOptionSpecsConfig({ reasoningLevel: { values: ["disabled", "low", "high", "xhigh"], map }, maxOutputTokens: { max: 32000, map: "{}" } }) });
+    const { runtime, created } = captureRuntime(new ProviderRegistry([{ ...responses, models: [{ modelId: "model-a", config }] }]));
+    expect(runtime.resolveNativeCodexModel({ ...selection("mapped"), options: { reasoningLevel: level } })).toEqual({ modelId: "model-a", baseUrl: "https://mapped.example.test/v1", apiKey: "dummy", ...(level === "disabled" ? {} : { reasoningEffort: level === "high" ? "xhigh" : level }) });
+    expect(created).toEqual([]);
+  });
+
+  it("rejects incompatible native providers and unrepresentable option maps without fallback", () => {
+    const chat = captureRuntime(new ProviderRegistry([provider()]));
+    expect(() => chat.runtime.resolveNativeCodexModel(selection())).toThrow("OpenAI Responses");
+    const responses = provider("api-provider", createApiKeyProviderConfig({ apiFormat: "openai-responses", apiKey: "dummy", baseURL: "https://api.example.test/v1", models: ["model-a"] }));
+    const mapped = captureRuntime(new ProviderRegistry([responses]));
+    expect(() => mapped.runtime.resolveNativeCodexModel(selection())).toThrow("reasoning option mapping");
+    const withHeaders = captureRuntime(new ProviderRegistry([{ ...responses, config: createApiKeyProviderConfig({ apiFormat: "openai-responses", apiKey: "dummy", baseURL: "https://api.example.test/v1", headers: { "X-Custom": "configured" } }) }]));
+    expect(() => withHeaders.runtime.resolveNativeCodexModel(selection())).toThrow("custom headers");
+    expect(chat.created).toEqual([]);
+    expect(mapped.created).toEqual([]);
+  });
+
   it("把 Registry 的完整 Provider / Model Config 原样交给 Adapter", () => {
     const registry = new ProviderRegistry([provider()]);
     const { created, expected, runtime } = captureRuntime(registry);

@@ -69,6 +69,8 @@ export async function preflightPromptTurn(
   record: V4SessionRecordView,
   params: StartPromptTurnParams,
 ): Promise<void> {
+  // 原生执行器拥有模型选择；不能让 ZCode Provider 目录阻止 Codex 原生会话。
+  if (record.app.runtime.nativeTurnExecutor) return;
   // 排队输入的 execution 只在提升边界应用，准入阶段一律按普通 Selection 预检，供卡失效后提升。
   const usesExecutionSelection =
     params.modelExecution?.selectionScope === "execution" && !params.requireQueue;

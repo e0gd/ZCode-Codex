@@ -137,6 +137,54 @@ function reduce(messages: MessageWithParts[]) {
 }
 
 describe("transcript→event 合成", () => {
+  it("preserves frozen native assistant model metadata in live and cold rows", () => {
+    const messages: MessageWithParts[] = [];
+    const selections = [
+      { providerId: "provider-a", modelId: "deepseek-v4.1-flash" },
+      { providerId: "provider-b", modelId: "model-b" },
+    ];
+    for (const [index, selection] of selections.entries()) {
+      const user = userMessage("u-model-" + index, "task", 1000 + index * 10);
+      const assistant = assistantMessage("a-model-" + index, String(user.info.id), "answer-" + index, 1001 + index * 10);
+      if (assistant.info.role !== "assistant") throw new Error("Invalid fixture");
+      assistant.info.providerId = selection.providerId as never;
+      assistant.info.modelId = selection.modelId as never;
+      messages.push(user, assistant);
+    }
+    const events = synthesizeEventsFromMessages(messages, { sessionId: "s1" });
+    const expected = selections.map(selection => selection.providerId + "/" + selection.modelId);
+    const live = new ProductProjection("s1", "live-model");
+    for (const event of events) live.applyEvent(event);
+    const cold = new ProductProjection("s1", "cold-model");
+    cold.beginHydrationReplay();
+    for (const event of events) cold.applyHydrationEvent(event);
+    cold.completeHydrationReplay();
+    for (const projection of [live, cold]) {
+      expect(projection.getSnapshot().rows.window.filter(row => row.kind === "assistantText").map(row => row.model)).toEqual(expected);
+    }
+  });
+  it.each([
+    ["native cancelled partial", true, false, "cancelled", "interrupted", "completedInterrupted"],
+    ["native failed partial", true, false, "error", "interrupted", "error"],
+    ["native completed segment then cancel", true, true, "cancelled", "complete", "completedInterrupted"],
+    ["ordinary incomplete text then cancel", false, false, "cancelled", "complete", "completedInterrupted"],
+    ["native completed success", true, true, "success", "complete", "completedSuccess"],
+  ] as const)("keeps cold partial termination semantics (%s)", (_label, native, ended, outcome, textState, phase) => {
+    const user = userMessage("u-native-terminal", "task", 1000);
+    const assistant = assistantMessage("a-native-terminal", user.info.id, "partial", 1001);
+    const part = assistant.parts[0]!;
+    if (part.type !== "text" || assistant.info.role !== "assistant") throw new Error("Invalid fixture");
+    part.time = { start: 1001, ...(ended ? { end: 1002 } : {}) };
+    if (native) part.metadata = { executionBackend: "codex", nativeItemId: "partial" };
+    if (outcome !== "success") assistant.info.error = outcome === "cancelled"
+      ? { name: "AbortError", data: { turnResult: "cancelled" } }
+      : { name: "Error", data: { message: "Native turn failed" } };
+    const { events, projection } = reduce([user, assistant]);
+    expect(projection.getSnapshot().control.phase).toBe(phase);
+    expect(projection.getSnapshot().rows.window).toContainEqual(expect.objectContaining({ kind: "assistantText", text: "partial", state: textState }));
+    expect(events.filter(event => event.type === SessionEventType.ModelStreaming && (event.payload as { kind?: string }).kind === "text_end")).toHaveLength(native && !ended ? 0 : 1);
+  });
+
   it("冷恢复把缺少完成时间的 orphan assistant 收口为 completedInterrupted", () => {
     const user = userMessage("u-orphan", "执行任务", 1000);
     const orphan = assistantMessage("a-orphan", "u-orphan", "未完成的部分结果", 1001);

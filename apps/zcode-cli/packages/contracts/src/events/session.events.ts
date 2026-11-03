@@ -793,6 +793,8 @@ export type ModelStreamingKind =
   | "error";
 
 export interface ModelStreamingPayload {
+  /** Frozen executing provider/model display identity; absent for legacy events. */
+  model?: string;
   delta: string;
   done: boolean;
   kind?: ModelStreamingKind;

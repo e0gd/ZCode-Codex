@@ -2803,6 +2803,7 @@ export class ProductProjection {
     const row: AssistantTextRow = {
       ...this.rowBase(event, this.turnIdOf(event), fact.entityId),
       kind: "assistantText",
+      ...(fact.stream.model ? { model: fact.stream.model } : {}),
       ...(fact.stream.assistantResponseId
         ? { assistantResponseId: fact.stream.assistantResponseId }
         : {}),

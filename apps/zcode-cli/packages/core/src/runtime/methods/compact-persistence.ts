@@ -221,6 +221,18 @@ export async function recoverInterruptedCompactTimelines(
         continue;
       }
 
+      if (part.metadata?.executionBackend === "codex") {
+        // 原生 compact 只是通知，不能推断 boundary 或用 standalone writer 重写 assistant。
+        Object.assign(part, {
+          timelineStatus: CompactTimelineStatus.Interrupted,
+          reason: "cancelled",
+          time: { start: part.time?.start ?? message.info.time.created, end: Date.now() },
+        });
+        await this.persistPart(part, traceContext);
+        recovered += 1;
+        continue;
+      }
+
       const boundary = boundaryByOperationId.get(part.operationId);
       const status = boundary ? CompactTimelineStatus.Completed : CompactTimelineStatus.Interrupted;
       const timeline: CompactTimelineContext = {

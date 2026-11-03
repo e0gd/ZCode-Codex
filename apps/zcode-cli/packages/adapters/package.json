@@ -89,6 +89,10 @@
     "./tools": {
       "types": "./dist/tools/index.d.ts",
       "import": "./dist/tools/index.js"
+    },
+    "./native-codex": {
+      "types": "./dist/native-codex/index.d.ts",
+      "import": "./dist/native-codex/index.js"
     }
   },
   "scripts": {

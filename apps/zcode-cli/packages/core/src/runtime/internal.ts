@@ -83,6 +83,7 @@ export interface AgentRuntimeInternal
   executor: ToolExecutor;
   hookRunner?: HookRunner;
   workspaceHookAdmission?: WorkspaceHookRuntimeAdmissionPort;
+  nativeTurnExecutor?: AgentRuntimeDeps["nativeTurnExecutor"];
   modelFactory: AgentRuntimeDeps["modelFactory"];
   modelIoDir?: string;
   providerRuntimeHeadersPort?: ProviderRuntimeHeadersPort;

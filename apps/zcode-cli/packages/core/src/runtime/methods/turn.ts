@@ -1,4 +1,5 @@
 import { beginLocalTurnPreparation, type LocalTtftDetail } from "@zcode/contracts";
+import { executeNativeTurn } from "./native-turn.js";
 import { runtimeInputMetadata } from "../../agent/runtime-input-presentation.js";
 import { refreshWorkspaceTrustAdmission } from "./mcp.js";
 import { withConversationQuotes } from "../helpers/conversation-quotes.js";
@@ -85,6 +86,7 @@ import {
   resolveExecutionModelRetryBudget,
 } from "./turn-model.js";
 import { rebuildContextPrefix } from "./context-refresh.js";
+import { applyRuntimeExecutionState } from "../execution-state.js";
 import {
   matchExecutionSelectionCreationFallback,
   resolveExecutionFallbackCandidates,
@@ -152,6 +154,9 @@ export async function executeTurnCommand(
     (options && "executionSelection" in options
       ? options.executionSelection
       : this.getSessionModelSelection());
+  const nativeModelSelection = this.nativeTurnExecutor
+    ? structuredClone(admittedModelSelection)
+    : undefined;
   // 加速轮期间新输入可以更新 Session 续跑选择；卡过期必须回到本轮启动时的普通模型。
   const highspeedFallbackSelection = options?.modelExecution?.selectionFallback
     ? structuredClone(
@@ -270,7 +275,7 @@ export async function executeTurnCommand(
       let creationFallbackUnavailable = false;
       try {
         admittedModel =
-          rewindCommand === null
+          rewindCommand === null && !this.nativeTurnExecutor
             ? createTurnModel(this, {
                 requestDependencies: options?.modelExecution?.requestDependencies,
                 selection: admittedModelSelection,
@@ -399,7 +404,7 @@ export async function executeTurnCommand(
       let phaseStartedAt: number;
       // Bug 根因：创建错误确定后仍执行 Context/SessionStart，会在 TurnStarted 前被二次 I/O 错误覆盖，
       // 并提前消费一次性 SessionStart。失败轮跳过它们，只复用后续输入持久化与终态主链。
-      if (!creationFailure) {
+      if (!creationFailure && !this.nativeTurnExecutor) {
         phaseStartedAt = startTurnPhase("context_initialization");
         if (this.contextInitialized) {
           // 每个后续 model step 都按该步骤实际持有的 Model 重新投影 Context；
@@ -426,7 +431,7 @@ export async function executeTurnCommand(
         );
       }
 
-      if (compactInstructions !== null) {
+      if (compactInstructions !== null && !this.nativeTurnExecutor) {
         const compactModel = await applySubmissionExecutionState(
           this,
           options?.intent,
@@ -444,7 +449,7 @@ export async function executeTurnCommand(
           compactModel,
         );
       }
-      if (rewindCommand !== null) {
+      if (rewindCommand !== null && !this.nativeTurnExecutor) {
         return this.executeRewindCommand(
           input,
           rewindCommand,
@@ -459,7 +464,7 @@ export async function executeTurnCommand(
         turnId,
         turnTraceContext,
         "regular",
-        creationFailure === undefined,
+        creationFailure === undefined && !this.nativeTurnExecutor,
         {
           ...(options?.inputId === undefined ? {} : { inputId: options.inputId }),
         },
@@ -489,7 +494,7 @@ export async function executeTurnCommand(
             options?.modelExecution,
             admittedModel,
           );
-      startedTarget = creationFailure
+      startedTarget = creationFailure || this.nativeTurnExecutor
         ? null
         : await this.readSessionTargetForContext(turnTraceContext);
       completeTurnPhase("target_read", phaseStartedAt);
@@ -564,7 +569,7 @@ export async function executeTurnCommand(
 
       try {
         phaseStartedAt = startTurnPhase("user_prompt_hooks");
-        const userPromptHookResult: HookRunResult = options?.skipUserPromptSubmitHooks
+        const userPromptHookResult: HookRunResult = options?.skipUserPromptSubmitHooks || this.nativeTurnExecutor !== undefined
           ? { additionalContexts: [] }
           : await this.runUserPromptSubmitHooks(
               input,
@@ -753,6 +758,27 @@ export async function executeTurnCommand(
           ) {
             await refreshWorkspaceTrustAdmission(this, turnTraceContext);
           }
+        }
+        if (this.nativeTurnExecutor) {
+          // Codex 拥有完整模型/工具循环；沿用本层输入、终态与取消收尾，不构造 ZCode Model。
+          if (attachments?.length) throw new Error("Native Codex attachments are not supported yet");
+          const nativeResult = await executeNativeTurn.call(this, {
+            text: input, inputId: options?.inputId ?? String(turnId),
+            ...(nativeModelSelection ? { modelSelection: nativeModelSelection } : {}),
+            signal: turnAbortSignal, traceContext: turnTraceContext,
+            userMessageId, events,
+          });
+          const usage = createModelUsageSummaryFromEvents(events);
+          const completeEvent = this.createEvent(SessionEventType.TurnComplete, {
+            response: nativeResult.text, tokenCount: 0, usage,
+            toolCallCount: nativeResult.toolCallCount, duration: Date.now() - turnStartedAtMs,
+            resultType: "success", inputId: options?.inputId,
+          }, turnTraceContext);
+          await this.appendEvent(completeEvent, turnTraceContext);
+          events.push(completeEvent);
+          this.turnNumber++;
+          return { response: nativeResult.text, turnId, traceId, usage, events,
+            projection: await this.rebuildProjection() };
         }
         if (creationFailure) {
           // 已接纳输入已随 TurnStarted 和用户消息落库；不准备 Agent、不生成标题、不请求模型，

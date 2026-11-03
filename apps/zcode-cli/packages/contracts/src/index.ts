@@ -3,6 +3,7 @@
 // ============================================================
 
 // Interfaces
+export * from "./interfaces/native-turn.port.js";
 export * from "./interfaces/shared.js";
 export * from "./interfaces/execution.port.js";
 export * from "./interfaces/browser-control.port.js";

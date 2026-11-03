@@ -13,6 +13,8 @@
 
 ZCode is an AI coding workspace with desktop, browser, and terminal interfaces. This repository contains the clients, backend services, shared UI, and Agent CLI and runtime source code.
 
+This fork's `native-codex` branch adds an experimental official Codex execution backend. See [the branch notes](NATIVE_CODEX.md) for building, configuration, and acceptance limits. An engine settings UI and desktop/phone end-to-end acceptance are still pending.
+
 ## Updates
 
 - **2026-10-30**: Updated to ZCode v3.17.1.

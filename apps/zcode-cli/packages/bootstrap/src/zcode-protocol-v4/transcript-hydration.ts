@@ -666,12 +666,14 @@ function synthesizeTextPart(
   assistantMessageCreatedAtMs: number | undefined,
   push: PushEvent,
   turnId: string,
+  model?: string,
 ): void {
   if (part.ignored === true || part.text.length === 0) return;
   push(
     SessionEventType.ModelStreaming,
     {
       kind: "text_start",
+      ...(model ? { model } : {}),
       delta: "",
       done: false,
       assistantMessageId,
@@ -694,6 +696,9 @@ function synthesizeTextPart(
     },
     turnId,
   );
+  // 原生 partial 的缺失 end 是未完成事实；沿用终态事件标记 interrupted，不能伪造成功 text_end。
+  // 旧记录和非原生正文仍沿用既有合成规则，避免扩大本次修复的语义范围。
+  if (part.metadata?.executionBackend === "codex" && part.time && part.time.end === undefined) return;
   push(
     SessionEventType.ModelStreaming,
     { kind: "text_end", delta: "", done: false, partId: part.id },
@@ -1264,6 +1269,10 @@ function synthesizeAssistantParts(
           messageCreatedAtMs(message),
           push,
           turnId,
+          // 从消息自身恢复执行身份，不能回读当前 session config 覆盖历史行。
+          message.info.role === "assistant" && message.info.providerId && message.info.modelId
+            ? String(message.info.providerId) + "/" + String(message.info.modelId)
+            : undefined,
         );
         break;
       case "reasoning":

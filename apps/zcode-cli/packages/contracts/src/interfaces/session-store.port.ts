@@ -568,6 +568,11 @@ export interface CompactionPart {
 }
 
 export interface CompactionPartMetadata {
+  /** 原生通知不拥有 ZCode compact boundary；冷恢复只收口 part，不改写所属 assistant。 */
+  executionBackend?: "codex";
+  nativeThreadId?: string;
+  nativeTurnId?: string;
+  nativeItemId?: string;
   /** summary 之前的请求前公告；冷恢复放回 summary 之前，切片之后的保留段时跳过。 */
   compactLeadingMessageIds?: MessageId[];
 }

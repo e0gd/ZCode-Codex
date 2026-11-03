@@ -298,7 +298,7 @@ export async function persistAssistantMessage(
       }
     | undefined,
   traceContext: TraceContext,
-  model?: Model,
+  model?: Pick<Model, "providerId" | "modelId">,
 ): Promise<void> {
   this.latestConversationMessageId = messageID;
   this.latestAssistantMessageId = messageID;
@@ -306,7 +306,8 @@ export async function persistAssistantMessage(
     this.latestAssistantTurnId = traceContext.turnId;
   }
   if (!this.sessionStore) return;
-  const selection = this.getSessionModelSelection();
+  // 原生执行由外部引擎决定模型，不能把 UI 中的 ZCode 选择伪记为执行事实。
+  const selection = this.nativeTurnExecutor && !model ? undefined : this.getSessionModelSelection();
   const providerId =
     model?.providerId ?? (selection && createModelProviderId(selection.providerId));
   const modelId = model?.modelId ?? (selection && createModelId(selection.modelId));

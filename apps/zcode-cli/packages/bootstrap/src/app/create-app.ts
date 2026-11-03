@@ -21,6 +21,7 @@ import { createNodeSessionMailboxAdapter } from "@zcode/adapters/mailbox";
 import { createNodeContextSourceAdapter } from "@zcode/adapters/context";
 import { createNodeSkillAdapter } from "@zcode/adapters/skills";
 import { createMcpAdapter } from "@zcode/adapters/mcp";
+import { createNativeCodexExecutorFromEnv } from "@zcode/adapters/native-codex";
 import {
   AgentRuntime,
   normalizeAgentProfiles,
@@ -855,6 +856,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       currentSelection: () => getRuntime().getSessionModelSelection(),
     });
     runtime = new AgentRuntime(sessionId, runtimeConfig, {
+      nativeTurnExecutor: createNativeCodexExecutorFromEnv(workingDirectory, options.env ?? process.env, providerModelRuntime.resolveNativeCodexModel),
       ...(options.readSubagentRuntimeConfig
         ? {
             loadAgentDefinitions: async (input) => {
