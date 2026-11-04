@@ -56,3 +56,51 @@ test("only the same repository workflow commit can reach a prerelease", () => {
   assert.throws(fixture({ repository: "other/repo" }));
   assert.throws(fixture({ path: ".github/workflows/other.yml" }));
 });
+
+test("uploaded filenames and public checksums agree after GitHub filename normalization", () => {
+  const upload = steps.find((step) => step.name === "Verify and publish").run;
+  const script = upload
+    .split("<<'NODE'\n")[1]
+    .split("\nNODE")[0]
+    .replace(/^import .*;\n/gm, "");
+  const run = new Function(
+    "readdirSync",
+    "renameSync",
+    "readFileSync",
+    "writeFileSync",
+    "spawnSync",
+    "assert",
+    "process",
+    script,
+  );
+  const files = ["ZCode Preview-3.17.1-mac-arm64.dmg", "ZCode Preview-3.17.1-mac-arm64.zip"];
+  const digest = "a".repeat(64);
+  const renamed = [];
+  let written;
+  let uploaded;
+  run(
+    () => [...files, "SHA256SUMS.txt"],
+    (from, to) => renamed.push([from, to]),
+    () => files.map((f) => digest + "  " + f).join("\n"),
+    (file, content) => {
+      written = { file, content };
+    },
+    (command, args) => {
+      uploaded = { command, args };
+      return { status: 0 };
+    },
+    assert,
+    { env: { PACKAGE_PLATFORM: "mac-arm64", RELEASE_TAG: "v3.17.1-codex.2" } },
+  );
+  const normalized = files.map((f) => f.replaceAll(" ", "."));
+  assert.deepEqual(
+    renamed,
+    files.map((f, i) => [f, normalized[i]]),
+  );
+  assert.equal(written.file, "SHA256SUMS-mac-arm64.txt");
+  assert.equal(written.content, normalized.map((f) => digest + "  " + f).join("\n") + "\n");
+  assert.deepEqual(uploaded, {
+    command: "gh",
+    args: ["release", "upload", "v3.17.1-codex.2", ...normalized, written.file],
+  });
+});

@@ -90,7 +90,7 @@ jobs:
           cd release-input
           sha256sum --check SHA256SUMS.txt
           node --input-type=module <<'NODE'
-          import { readdirSync, renameSync } from 'node:fs';
+          import { readdirSync, renameSync, readFileSync, writeFileSync } from 'node:fs';
           import { spawnSync } from 'node:child_process';
           import assert from 'node:assert/strict';
           const patterns = { 'mac-arm64': [/\.dmg$/, /\.zip$/], 'mac-x64': [/\.dmg$/, /\.zip$/], 'win-x64': [/\.exe$/], 'linux-x64': [/\.AppImage$/, /\.deb$/, /\.rpm$/, /\.pkg\.tar\.zst$/] };
@@ -98,8 +98,20 @@ jobs:
           const files = readdirSync('.');
           for (const pattern of required) assert(files.some(f => pattern.test(f)), 'Missing package format: ' + pattern);
           const manifest = 'SHA256SUMS-' + process.env.PACKAGE_PLATFORM + '.txt';
-          renameSync('SHA256SUMS.txt', manifest);
-          const assets = files.filter(f => required.some(p => p.test(f)));
+          // GitHub 会把附件名空格改为点号；先统一名称并同步清单，保留已校验的摘要。
+          const originalAssets = files.filter(f => required.some(p => p.test(f)));
+          const names = new Map(originalAssets.map(f => [f, f.replaceAll(' ', '.')]));
+          const assets = [...names.values()];
+          assert.equal(new Set(assets).size, assets.length, 'Normalized asset names collide');
+          for (const name of assets) assert(/^[A-Za-z0-9._-]+$/.test(name), 'Unsafe asset name');
+          const checksums = readFileSync('SHA256SUMS.txt', 'utf8').trim().split(/\r?\n/).map(line => {
+            const match = /^([a-f0-9]{64}) {2}(.+)$/.exec(line);
+            assert(match && names.has(match[2]), 'Unexpected checksum entry');
+            return match[1] + '  ' + names.get(match[2]);
+          });
+          assert.equal(checksums.length, assets.length, 'Missing checksum entry');
+          for (const [original, normalized] of names) if (original !== normalized) renameSync(original, normalized);
+          writeFileSync(manifest, checksums.join('\n') + '\n');
           const result = spawnSync('gh', ['release', 'upload', process.env.RELEASE_TAG, ...assets, manifest], { stdio: 'inherit' });
           assert.equal(result.status, 0, 'Release upload failed');
           NODE
