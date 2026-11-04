@@ -29,3 +29,13 @@ anchors the existing Agent row and whose thread ID establishes the child relatio
 Only active trusted parent items establish children. Other activity kinds are not
 turn outcomes; child turn terminals remain authoritative. Core alone persists child
 sessions and emits existing product facts for desktop continuous and mobile replay.
+
+Child turn start publishes immediately. For official versions that omit custom tool
+items from live notifications, the adapter incrementally reads only an already
+trusted child's official rollout path, bound through thread/read and constrained
+to the managed sessions directory. Explicit parent spawn message arguments provide
+the task input; function/custom call IDs pair visible inputs and results. Instructions,
+reasoning and encrypted content are excluded. Reads serialize with native messages,
+wait for the child's turn identity, drain before its terminal and stop on disposal.
+Core's existing child writer persists these facts and exposes bounded running Bash
+output through the existing ToolCallProgress contract.

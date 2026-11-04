@@ -7,12 +7,14 @@ import { ConversationStatusPanel } from "@/v4/ConversationStatusPanel.js";
 import { ConversationAgentToolCallRow } from "@/v4/ConversationAgentToolCallRow.js";
 import { buildAssistantWorkRenderItems } from "@/v4/conversationAssistantWorkItems.js";
 import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
+import { ConversationRowView } from "@/v4/ConversationRowView.js";
 import type { ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
 import "@/styles.css";
 
 const params = new URLSearchParams(location.search);
 const data = await fetch("/native-child-data").then(response => response.json()) as {
   running: { snapshot: ConversationSnapshot; children: Record<string, ConversationSnapshot> };
+  preview: { snapshot: ConversationSnapshot; children: Record<string, ConversationSnapshot> };
   completed: { snapshot: ConversationSnapshot; children: Record<string, ConversationSnapshot> };
 };
 document.documentElement.className = params.get("theme") === "zai-dark"
@@ -21,7 +23,7 @@ document.documentElement.className = params.get("theme") === "zai-dark"
 function Fixture() {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<string>();
-  const [stage, setStage] = useState<"running" | "completed">(
+  const [stage, setStage] = useState<"running" | "preview" | "completed">(
     () => sessionStorage.getItem("native-child-stage") === "completed" ? "completed" : "running",
   );
   const current = data[stage];
@@ -36,6 +38,7 @@ function Fixture() {
           <button data-testid="complete-native-children" onClick={() => {
             sessionStorage.setItem("native-child-stage", "completed"); setStage("completed"); setSelected(undefined); setOpen(false);
           }}>Complete fixture children</button>
+          <button data-testid="preview-native-children" onClick={() => setStage("preview")}>Advance fixture tool preview</button>
           <section data-testid="native-spawn-records">
             {items.map(item => item.kind === "agentToolCall" ? <ConversationAgentToolCallRow key={item.key} item={item}
               context={{ workspacePath: "C:/fixture", sessionId: current.snapshot.sessionId,
@@ -49,9 +52,14 @@ function Fixture() {
             runningSubagents={current.snapshot.subagents.running} backgroundWorks={current.snapshot.backgroundWorks}
             agentSectionOpen layoutMode="inline" summaryPanelVariantOverride="panel"
             onOpenSubagentSession={request => { setSelected(request.childSessionId); setOpen(false); }} />}
-          {selected && <output data-testid="selected-child" data-child-session-id={selected}>
-            {current.children[selected].rows.window.filter(row => row.kind === "assistantText").map(row => row.text).join("\n")}
-          </output>}
+          {selected && <section data-testid="selected-child" data-child-session-id={selected} className="min-w-0 space-y-3">
+            {current.children[selected].rows.window.filter(row => row.kind === "userInput" || row.kind === "toolCall" || row.kind === "assistantText").map(row => (
+              <div key={row.rowId} data-child-row-kind={row.kind} data-child-tool-id={row.kind === "toolCall" ? row.toolCallId : undefined}>
+                <ConversationRowView row={row} hideAssistantActions context={{ workspacePath: "C:/fixture", sessionId: selected,
+                  theme: params.get("theme")?.endsWith("dark") ? "dark" : "light", codePreviewSettings: DEFAULT_CODE_PREVIEW_SETTINGS }} />
+              </div>
+            ))}
+          </section>}
         </main>
       </TooltipProvider>
     </ZCodeIntlProvider>

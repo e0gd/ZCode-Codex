@@ -9,6 +9,7 @@ import { compileModelOptionMap } from "@zcode/model-option-map";
 import { CodexConnection, NativeChildObserver, nativeToolName, nativeToolInput, nativeToolOutput, identifier, record, type NativeChildRelation, type RpcMessage } from "./connection.js";
 import { ASK_USER_QUESTION_TOOL_NAME, NativeAskUserQuestionInputSchema, detectImageMediaType, normalizeImageMediaType, parseImageDataUrl } from "@zcode/contracts";
 import { NativeCodexAccountController, nativeSubscriptionArguments, nativeSubscriptionEnvironment, readNativeSubscriptionCatalog, type NativeCodexAccountOptions } from "./account.js";
+import { NativeChildTranscriptReader } from "./child-transcript.js";
 export { NativeCodexAccountController } from "./account.js";
 export type { NativeCodexAccountOptions } from "./account.js";
 
@@ -38,6 +39,7 @@ const nativeEfforts = new Set<NativeCodexReasoningEffort>(["none", "minimal", "l
 const nativeStreamFailureKinds = new Set(["responseStreamConnectionFailed", "responseStreamDisconnected", "responseTooManyFailedAttempts"]);
 const minimumHttpStatus = 100;
 const maximumHttpStatus = 599;
+const nativeChildObservationIntervalMs = 250;
 
 function nativeTurnError(value: unknown, fallbackMessage: string, lastRetryStreamError?: Error): Error {
   const category = record(value).codexErrorInfo;
@@ -243,6 +245,29 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       await input.onEvent(event);
     };
     const children = new NativeChildObserver(emit, input.sessionId);
+    const transcript = new NativeChildTranscriptReader(this.options.codexHome, (method, params) => connection ? connection.request(method, params) : Promise.reject(new Error("Native connection unavailable")));
+    const readChild = async (agentId: string) => {
+      const child = children.children.get(agentId);
+      if (!child || !child.turnId || child.status !== "running" || finished || input.signal.aborted) return;
+      await children.transcript(agentId, await transcript.read(agentId, child.parentAgentId ?? threadId));
+    };
+    const activityWithPrompt = async (item: Record<string, unknown>, parentId: string) => {
+      if (item.type !== "subAgentActivity" || item.kind !== "started" || typeof item.id !== "string") return item;
+      const prompt = await transcript.spawnPrompt(parentId, item.id);
+      return prompt === undefined ? item : { ...item, prompt };
+    };
+    let observationQueued = false;
+    // 该官方版本不推送 exec 的 item；有界读取已绑定 rollout，只补事实，不触发执行或恢复。
+    const observationTimer = setInterval(() => {
+      if (finished || input.signal.aborted || observationQueued || !children.running) return;
+      observationQueued = true;
+      sequence = sequence.then(async () => {
+        if (finished || input.signal.aborted) return;
+        for (const child of children.children.values()) if (child.status === "running") await readChild(child.agentId);
+      }).finally(() => { observationQueued = false; });
+      void sequence.catch(error => fail(error instanceof Error ? error : new Error("Native child observation failed")));
+    }, nativeChildObservationIntervalMs);
+    observationTimer.unref?.();
     const finishIfIdle = () => {
       if (parentCompleted && !children.running && !finished) { finished = true; complete(); }
     };
@@ -334,10 +359,12 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
         return;
       }
       const isChild = children.children.has(String(p.threadId));
+      if (isChild && message.method === "turn/completed") await readChild(String(p.threadId));
       if (isChild && (message.method === "item/started" || message.method === "item/completed")) {
-        await children.notification(message);
+        const item = await activityWithPrompt(record(p.item), String(p.threadId));
+        await children.notification({ ...message, params: { ...p, item } });
         // notification 已拒绝旧 child turn；关系注册也必须使用同一门槛，防止迟到的嵌套派生绕过它。
-        if (children.acceptsCurrentItem(message) && await children.collaboration(record(p.item), String(p.threadId))) {
+        if (children.acceptsCurrentItem(message) && await children.collaboration(item, String(p.threadId))) {
           await atomicWrite(join(directory, "subagents.json"), { version: 1, threadId, children: children.relations() });
         }
       }
@@ -357,7 +384,7 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
         text += p.delta;
         await emit({ type: "textDelta", itemId: id, delta: p.delta });
       } else if (message.method === "item/started" || message.method === "item/completed") {
-        const item = record(p.item);
+        const item = await activityWithPrompt(record(p.item), threadId);
         const id = identifier(item.id);
         if (item.type === "contextCompaction") {
           // item 身份由 Core 统一去重；旧 thread/compacted 无 item 身份，不能合成成功。
@@ -562,6 +589,7 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       return { text, threadId, toolCallCount };
     } finally {
       finished = true;
+      clearInterval(observationTimer);
       questionController.abort(new Error("Native turn ended"));
       // 连接可能在 broker 等待期间退出；先让 Core 发布 resolved，再终结整轮和工具。
       await questionDelivery?.catch(() => {});

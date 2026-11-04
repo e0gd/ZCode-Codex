@@ -1,5 +1,9 @@
 # Tool Change Chain Spec
 
+## Native Codex running child transcript observation (2026-11-04)
+
+Trusted native spawn → child turn start → official live items plus bounded incremental reads of that child's official rollout → existing NativeChildObserver observations → Core message/tool parts and ToolCallProgress → existing child-topic continuous/replayable projection → read-only subagent pane. New custom/function tool work may have no live app-server item, so prose-only fixtures are insufficient. Read only paths bound by official thread/read to a trusted child and constrained to managed sessions; whitelist admitted task input and executed tool call/results, excluding instructions/reasoning/encrypted content. No model execution or child resume is introduced. Active-turn identity, call-ID dedupe, final drain and cancellation/disposal stop the transport observation lifecycle. Full contract and acceptance: [running child input and tool activity](../native-codex-executor.md#running-child-input-and-tool-activity-2026-11-04).
+
 ## Native Codex collaboration activity compatibility (2026-11-04)
 
 Official `collaboration.spawn_agent` → `subAgentActivity(kind=started, id, agentThreadId, agentPath)` → existing native child observer and `Agent` launch ACK → Core child session and standard SubagentSpawned/Stopped facts → existing V4 spawn rows, running robot trigger and ended-directory restoration. The legacy `collabAgentToolCall` path remains supported. Only an active trusted parent's started activity establishes a child; no MCP tool-name inference or second executor is introduced. Duplicate activity is idempotent. Completed/interacted/interrupted activity is not an authoritative child-turn outcome and cannot prematurely close the native process. Both continuous desktop and replayable mobile projections use the same persisted events. See [native child observation](../native-codex-executor.md#native-child-observation).

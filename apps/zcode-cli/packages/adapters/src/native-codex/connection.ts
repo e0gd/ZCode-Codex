@@ -4,6 +4,7 @@ import type { NativeSubagentItem, NativeSubagentUpdate } from "@zcode/contracts"
 import { nativeCodexChildSessionId } from "@zcode/contracts";
 
 type RecordValue = Record<string, unknown>;
+export interface NativeTranscriptRecord { turnId?: string; item: RecordValue }
 export const record = (value: unknown): RecordValue =>
   value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as RecordValue)
@@ -83,7 +84,7 @@ export class NativeChildObserver {
       const agentId = identifier(item.agentThreadId);
       if (this.children.has(agentId)) return false;
       this.children.set(agentId, { agentId, parentAgentId, parentToolCallId: identifier(item.id),
-        prompt: typeof item.agentPath === "string" ? item.agentPath : "Codex", agentType: "Codex",
+        prompt: typeof item.prompt === "string" ? item.prompt : typeof item.agentPath === "string" ? item.agentPath : "Codex", agentType: "Codex",
         status: "running", items: new Map(), retiredTurns: new Set() });
       await this.publish(agentId);
       return true;
@@ -121,6 +122,30 @@ export class NativeChildObserver {
     return typeof turnId === "string" && child?.status === "running" && child.turnId === turnId && !child.retiredTurns.has(turnId);
   }
 
+  async transcript(agentId: string, records: NativeTranscriptRecord[]): Promise<void> {
+    const child = this.children.get(agentId);
+    if (!child || child.status !== "running") return;
+    let changed = false;
+    for (const { turnId, item } of records) {
+      if (turnId !== child.turnId || !turnId || child.retiredTurns.has(turnId)) continue;
+      if (typeof item.call_id !== "string") continue;
+      const id = identifier(item.call_id);
+      const previous = child.items.get(id);
+      if (item.type === "function_call" || item.type === "custom_tool_call") {
+        if (previous || typeof item.name !== "string") continue;
+        let input: RecordValue;
+        if (item.type === "custom_tool_call") input = { code: typeof item.input === "string" ? item.input : "" };
+        else { try { input = record(JSON.parse(String(item.arguments))); } catch { input = { arguments: String(item.arguments ?? "") }; } }
+        child.items.set(id, { type: "tool", id, name: item.name, input, output: "", completed: false, failed: false }); changed = true;
+      } else if ((item.type === "function_call_output" || item.type === "custom_tool_call_output") && previous?.type === "tool" && !previous.completed) {
+        const output = typeof item.output === "string" ? item.output : Array.isArray(item.output)
+          ? item.output.flatMap(value => { const part = record(value); return ["input_text", "output_text", "text"].includes(String(part.type)) && typeof part.text === "string" ? [part.text] : []; }).join("\n") : "";
+        child.items.set(id, { ...previous, output, completed: true, failed: item.is_error === true }); changed = true;
+      }
+    }
+    if (changed) await this.publish(agentId);
+  }
+
   async notification(message: RpcMessage): Promise<boolean> {
     const p = message.params;
     const child = this.children.get(String(p.threadId));
@@ -135,7 +160,13 @@ export class NativeChildObserver {
       if (child.turnId) child.retiredTurns.add(child.turnId);
       child.turnId = nativeTurnId; child.inputText = undefined; child.items.clear(); child.status = "running";
     }
-    if (message.method === "item/agentMessage/delta") {
+    if (message.method === "turn/started") {
+      // 新版子线程可能先长时间只执行 exec；轮开始就发布输入，不能等最终 agentMessage 才建可见会话。
+    } else if (message.method === "item/commandExecution/outputDelta" || message.method === "item/fileChange/outputDelta") {
+      const previous = child.items.get(String(p.itemId));
+      if (previous?.type !== "tool" || previous.completed || typeof p.delta !== "string") return true;
+      child.items.set(previous.id, { ...previous, output: previous.output + p.delta });
+    } else if (message.method === "item/agentMessage/delta") {
       const id = identifier(p.itemId); const previous = child.items.get(id);
       if (previous?.completed || typeof p.delta !== "string") return true;
       child.items.set(id, { type: "text", id, text: (previous?.type === "text" ? previous.text : "") + p.delta, completed: false });
@@ -149,7 +180,7 @@ export class NativeChildObserver {
         child.items.set(id, { type: "text", id, text: typeof item.text === "string" && (completed || !previous) ? item.text : previous?.type === "text" ? previous.text : "", completed });
       } else if (["commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall", "webSearch", "imageView", "imageGeneration"].includes(String(item.type)) || (item.type === "subAgentActivity" && item.kind === "started")) {
         child.items.set(id, { type: "tool", id, name: nativeToolName(item), input: nativeToolInput(item),
-          output: nativeToolOutput(item, this.rootSessionId), completed,
+          output: completed ? nativeToolOutput(item, this.rootSessionId) : typeof item.aggregatedOutput === "string" ? item.aggregatedOutput : "", completed,
           failed: item.status === "failed" || item.status === "declined" || item.success === false || (typeof item.exitCode === "number" && item.exitCode !== 0) });
       } else return true;
     } else if (message.method === "turn/completed") {

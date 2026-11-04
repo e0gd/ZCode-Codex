@@ -113,6 +113,55 @@ function approvalExecutor(decisions: string[]): NativeTurnExecutor {
 }
 
 describe("native turn execution", () => {
+  it("publishes bounded native child Bash output while running without inventing completion", async () => {
+    const store = createRecordingMessageStore();
+    const ready = Promise.withResolvers<void>(); const release = Promise.withResolvers<void>();
+    const output = "head\n" + "x".repeat(4200) + "\nlast line\n";
+    const item = { type: "tool" as const, id: "bash-live", name: "Bash", input: { command: "fixture only" }, output: "", completed: false, failed: false };
+    const observation = { type: "subagentUpdated" as const, agentId: "child", parentToolCallId: "spawn", prompt: "Read fixture", agentType: "Codex", status: "running" as const, turnId: "child-turn" };
+    const { runtime, sessionId, eventStore } = fixture({ async execute(input) {
+      await input.onEvent({ ...observation, items: [item] });
+      const current = { ...observation, items: [{ ...item, output }] };
+      await input.onEvent(current); await input.onEvent(current);
+      ready.resolve(); await release.promise;
+      await input.onEvent({ ...observation, status: "success", items: [{ ...item, output: output + "done", completed: true }] });
+      return { text: "", threadId: "parent", toolCallCount: 0 };
+    } }, { sessionStore: store as unknown as SessionStorePort });
+    const pending = runtime.executeTurn("Please delegate");
+    const childId = nativeCodexChildSessionId(sessionId, "child");
+    try {
+      await Promise.race([ready.promise, pending]);
+      const events = await eventStore.getEvents(childId);
+      const progress = events.filter(event => event.type === SessionEventType.ToolCallProgress);
+      expect(progress).toHaveLength(1);
+      expect(progress[0]?.payload).toMatchObject({ toolCallId: "bash-live", toolName: "Bash", outputPreview: {
+        text: expect.stringContaining("last line"), fullText: output.slice(-4096), totalBytes: new TextEncoder().encode(output).length,
+      } });
+      expect((progress[0]?.payload as any).outputPreview.text.length).toBeLessThanOrEqual(4096);
+      expect(events.some(event => event.type === SessionEventType.ToolCallResult || event.type === SessionEventType.TurnComplete)).toBe(false);
+      expect(store.savedParts.find(part => part.sessionID === childId && part.type === "tool")?.state.status).toBe("running");
+    } finally { release.resolve(); await pending; }
+    const ended = await eventStore.getEvents(childId);
+    expect(ended.filter(event => event.type === SessionEventType.ToolCallProgress)).toHaveLength(1);
+    expect(ended.filter(event => event.type === SessionEventType.ToolCallResult)).toHaveLength(1);
+    const persisted = store.savedParts.find(part => part.sessionID === childId && part.type === "tool");
+    expect(persisted?.state).toMatchObject({ status: "completed", output: output + "done" });
+    expect(persisted?.state).not.toHaveProperty("outputPreview");
+  });
+
+  it("does not invent Bash preview state for non-Bash, empty or already completed child tools", async () => {
+    const item = { type: "tool" as const, id: "tool", name: "Read", input: {}, output: "some content", completed: false, failed: false };
+    const observation = { type: "subagentUpdated" as const, agentId: "child", parentToolCallId: "spawn", prompt: "Read fixture", agentType: "Codex", turnId: "child-turn", status: "running" as const };
+    const { runtime, sessionId, eventStore } = fixture({ async execute(input) {
+      await input.onEvent({ ...observation, items: [item, { ...item, id: "unknown", name: "Unknown" }, { ...item, id: "empty", name: "Bash", output: "" }] });
+      await input.onEvent({ ...observation, status: "success", items: [{ ...item, completed: true }, { ...item, id: "done", name: "Bash", completed: true }] });
+      return { text: "", threadId: "parent", toolCallCount: 0 };
+    } });
+    await runtime.executeTurn("Please delegate");
+    const child = await eventStore.getEvents(nativeCodexChildSessionId(sessionId, "child"));
+    expect(child.some(event => event.type === SessionEventType.ToolCallProgress)).toBe(false);
+  });
+
   it("retains nested parent identity and reopens the same child with its follow-up input", async () => {
     const store = createRecordingMessageStore();
     const initial = { type: "subagentUpdated" as const, agentId: "a", parentToolCallId: "spawn-a", prompt: "Original task", agentType: "Codex", status: "running" as const, items: [] };
@@ -136,7 +185,7 @@ describe("native turn execution", () => {
     const upsertToolUsage = vi.fn(async () => {});
     Object.assign(store, { upsertToolUsage, recordModelUsage: vi.fn(), upsertTurnUsage: vi.fn(), pruneUsage: vi.fn() });
     const observation = { type: "subagentUpdated" as const, agentId: "child", parentToolCallId: "spawn", prompt: "Read files", agentType: "Codex", status: "running" as const, turnId: "child-turn",
-      items: [{ type: "tool" as const, id: "bash", name: "Bash", input: { command: "read only fixture" }, output: "", completed: false, failed: false }] };
+      items: [{ type: "tool" as const, id: "bash", name: "Bash", input: { command: "read only fixture" }, output: "partial output", completed: false, failed: false }] };
     const { runtime, eventStore, sessionId } = fixture({ async execute(input) {
       await input.onEvent(observation);
       throw Object.assign(new Error("fixture disconnected"), { name: status === "cancelled" ? "AbortError" : "Error" });
@@ -145,6 +194,10 @@ describe("native turn execution", () => {
     const childId = nativeCodexChildSessionId(sessionId, "child");
     expect(store.savedMessages.find(m => m.sessionID === childId && m.role === "assistant")?.error?.name).toBe(status === "cancelled" ? "AbortError" : "Error");
     expect(store.savedParts.find(p => p.sessionID === childId && p.type === "tool")?.state.status).toBe("error");
+    const childEvents = await eventStore.getEvents(childId);
+    expect(childEvents.filter(event => event.type === SessionEventType.ToolCallProgress)).toHaveLength(1);
+    expect(childEvents.filter(event => event.type === SessionEventType.ToolCallResult)).toHaveLength(1);
+    expect(store.savedParts.find(p => p.sessionID === childId && p.type === "tool")?.state).not.toHaveProperty("outputPreview");
     expect(upsertToolUsage).toHaveBeenCalledWith(expect.objectContaining({ sessionID: childId, toolCallID: "bash" }));
     expect((await eventStore.getEvents(sessionId)).filter(e => e.type === SessionEventType.SubagentStopped)).toHaveLength(1);
   });

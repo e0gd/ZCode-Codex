@@ -11,6 +11,7 @@ import type {
   NativeTurnApproval,
   NativeSubagentUpdate,
   NativeSubagentItem,
+  ExecutionOutputPreview,
 } from "@zcode/contracts";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { ASK_USER_QUESTION_TOOL_NAME, NativeAskUserQuestionInputSchema, nativeCodexChildSessionId, createSessionEvent, createTurnId } from "@zcode/contracts";
@@ -18,6 +19,16 @@ import { linkAbortSignal } from "../../tool/executor/timeout.js";
 
 const NATIVE_APPROVAL_RULE_ID = "native-codex";
 const NATIVE_APPROVAL_REASON = "Official Codex requests approval";
+const NATIVE_CHILD_PREVIEW_MAX_CHARACTERS = 4096;
+const NATIVE_CHILD_SHORT_PREVIEW_LINES = 5;
+
+function nativeChildOutputPreview(output: string): ExecutionOutputPreview {
+  const fullText = output.slice(-NATIVE_CHILD_PREVIEW_MAX_CHARACTERS);
+  let totalLines = output.length ? 1 : 0;
+  for (let index = 0; index < output.length; index++) if (output[index] === "\n") totalLines++;
+  return { text: fullText.split("\n").slice(-NATIVE_CHILD_SHORT_PREVIEW_LINES).join("\n"), fullText,
+    totalLines, totalBytes: new TextEncoder().encode(output).length, linesEstimated: false };
+}
 
 /** Native provider observations enter the same persisted event stream as regular turns. */
 export async function executeNativeTurn(
@@ -553,6 +564,12 @@ function createNativeChildWriter(
           if (!previous) {
             await publish(childId, SessionEventType.ToolCallScheduled, { toolCallId: item.id, toolName: item.name, input: item.input, assistantMessageId: messageId }, turnId);
             await publish(childId, SessionEventType.ToolCallStarted, { toolCallId: item.id, toolName: item.name, startedAt: new Date(child.created) }, turnId);
+          }
+          // 原生 child 的命令输出增量此前只留在 observation，运行中的 Bash 行没有进度可显示。
+          // 复用既有有界预览；终态仍只由真实 result 驱动，投影会在收口时清掉 preview。
+          if (!item.completed && item.name === "Bash" && item.output && (previous?.type !== "tool" || previous.output !== item.output)) {
+            await publish(childId, SessionEventType.ToolCallProgress, { toolCallId: item.id, toolName: item.name,
+              outputPreview: nativeChildOutputPreview(item.output) }, turnId);
           }
           if (item.completed && !previous?.completed) await publish(childId, SessionEventType.ToolCallResult, { toolCallId: item.id, toolName: item.name, result: { success: !item.failed, content: item.output } }, turnId);
         }

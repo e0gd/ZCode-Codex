@@ -21,7 +21,10 @@ const entry = "/packages/ui/test/browser/manual-review/pending/native-codex-suba
 let server, browser, origin, finish, turn;
 before(async () => {
   const sessionId = createSessionId("native-child-browser"); const projections = new Map();
-  const ready = Promise.withResolvers(); const release = Promise.withResolvers(); finish = release.resolve;
+  const ready = Promise.withResolvers(); const previewReady = Promise.withResolvers();
+  const previewRelease = Promise.withResolvers(); const release = Promise.withResolvers(); finish = release.resolve;
+  const command = agentId => `printf 'CHILD_TOOL_${agentId}'`;
+  const childTools = agentId => [{ type: "tool", id: "short-" + agentId, name: "Bash", input: { command: command(agentId) }, output: "CHILD_TOOL_OUTPUT_" + agentId, completed: true, failed: false }];
   const runtime = createTestAgentRuntime(sessionId, { workingDirectory: process.cwd(), titleGeneration: { enabled: false } }, {
     eventStore: createTestSessionEventStore(), sessionStore: createRecordingMessageStore(),
     modelFactory() { throw Error("ZCode model loop must not run"); },
@@ -29,12 +32,18 @@ before(async () => {
       for (const agentId of ["a", "b"]) {
         await input.onEvent({ type: "toolStarted", id: "spawn-" + agentId, name: "Agent", input: { prompt: "Child " + agentId, description: "Child " + agentId, run_in_background: true } });
         await input.onEvent({ type: "subagentUpdated", agentId, parentToolCallId: "spawn-" + agentId, agentType: "Codex", prompt: "Child " + agentId,
-          turnId: "turn-" + agentId, status: "running", items: [{ type: "text", id: "text", text: "LIVE_CHILD_" + agentId, completed: false }] });
+          turnId: "turn-" + agentId, inputText: "CHILD_ACTUAL_INPUT_" + agentId, status: "running", items: childTools(agentId) });
       }
-      ready.resolve(); await release.promise;
+      ready.resolve(); await previewRelease.promise;
+      for (const agentId of ["a", "b"]) await input.onEvent({ type: "subagentUpdated", agentId, parentToolCallId: "spawn-" + agentId, agentType: "Codex", prompt: "Child " + agentId,
+        turnId: "turn-" + agentId, inputText: "CHILD_ACTUAL_INPUT_" + agentId, status: "running", items: [...childTools(agentId),
+          { type: "tool", id: "long-" + agentId, name: "Bash", input: { command: "printf 'LONG_CHILD_" + agentId + "'; sleep 10" }, output: "RUNNING_CHILD_PREVIEW_" + agentId, completed: false, failed: false }] });
+      previewReady.resolve(); await release.promise;
       for (const agentId of ["a", "b"]) {
         await input.onEvent({ type: "subagentUpdated", agentId, parentToolCallId: "spawn-" + agentId, agentType: "Codex", prompt: "Child " + agentId,
-          turnId: "turn-" + agentId, status: "success", items: [{ type: "text", id: "text", text: "LIVE_CHILD_" + agentId + "_FINAL", completed: true }] });
+          turnId: "turn-" + agentId, inputText: "CHILD_ACTUAL_INPUT_" + agentId, status: "success", items: [...childTools(agentId),
+            { type: "tool", id: "long-" + agentId, name: "Bash", input: { command: "printf 'LONG_CHILD_" + agentId + "'; sleep 10" }, output: "RUNNING_CHILD_PREVIEW_" + agentId + "\nFINAL_CHILD_TOOL_" + agentId, completed: true, failed: false },
+            { type: "text", id: "text", text: "LIVE_CHILD_" + agentId + "_FINAL", completed: true }] });
         await input.onEvent({ type: "toolCompleted", id: "spawn-" + agentId, name: "Agent", output: "Child completed" });
       }
       return { text: "", threadId: "parent", toolCallCount: 2 };
@@ -49,12 +58,19 @@ before(async () => {
   const snapshot = conversationSnapshotSchema.parse(projections.get(sessionId).getSnapshot());
   assert.equal(snapshot.subagents.running.length, 2);
   const children = Object.fromEntries(snapshot.subagents.running.map(child => [child.childSessionId, conversationSnapshotSchema.parse(projections.get(child.childSessionId).getSnapshot())]));
+  for (const child of Object.values(children)) {
+    assert.equal(child.rows.window.filter(row => row.kind === "assistantText").length, 0);
+    assert.equal(child.rows.window.filter(row => row.kind === "toolCall" && row.status === "success").length, 1);
+  }
+  previewRelease.resolve(); await previewReady.promise;
+  const previewSnapshot = conversationSnapshotSchema.parse(projections.get(sessionId).getSnapshot());
+  const previewChildren = Object.fromEntries(Object.keys(children).map(childId => [childId, conversationSnapshotSchema.parse(projections.get(childId).getSnapshot())]));
   release.resolve(); await turn;
   const completedSnapshot = conversationSnapshotSchema.parse(projections.get(sessionId).getSnapshot());
   assert.equal(completedSnapshot.subagents.running.length, 0);
   assert.equal(completedSnapshot.rows.window.filter(row => row.kind === "subagent").length, 2);
   const completedChildren = Object.fromEntries(Object.keys(children).map(childId => [childId, conversationSnapshotSchema.parse(projections.get(childId).getSnapshot())]));
-  const stages = { running: {snapshot, children}, completed: {snapshot: completedSnapshot, children: completedChildren} };
+  const stages = { running: {snapshot, children}, preview: {snapshot: previewSnapshot, children: previewChildren}, completed: {snapshot: completedSnapshot, children: completedChildren} };
   server = await createServer({ root, configFile: false,
     plugins: [react(), tailwindcss(), { name: "native-child-browser", configureServer(vite) {
       vite.middlewares.use(async (req, res, next) => {
@@ -81,20 +97,35 @@ for (const width of [390, 1200]) for (const locale of ["zh-CN", "en-US"]) for (c
       assert.equal(await spawnLinks.count(), 2, "Both production message spawn rows must render");
       await page.locator('button[data-testid="v4-composer-background-work-trigger"]').click();
       await page.locator('button[data-running-subagent-session-trigger][data-child-session-id$="_a"]').click();
-      assert.equal(await page.getByTestId("selected-child").textContent(), "LIVE_CHILD_a");
-      assert.match(await page.getByTestId("selected-child").getAttribute("data-child-session-id"), /_a$/);
+      const childPane = page.getByTestId("selected-child");
+      assert.match(await childPane.getAttribute("data-child-session-id"), /_a$/);
+      await childPane.getByText("CHILD_ACTUAL_INPUT_a", { exact: true }).waitFor({ timeout: 10000 });
+      const shortTool = childPane.locator('[data-child-tool-id="short-a"]');
+      await shortTool.getByTestId("tool-summary-trigger-short-a").click();
+      assert.match(await shortTool.innerText(), /CHILD_TOOL_a/);
+      await shortTool.getByText("CHILD_TOOL_OUTPUT_a", { exact: true }).waitFor({ timeout: 10000 });
+      assert.equal(await childPane.locator('[data-child-row-kind="assistantText"]').count(), 0, "Child pane must show tools before any assistant text exists");
+      await page.getByTestId("preview-native-children").click();
+      const longTool = childPane.locator('[data-child-tool-id="long-a"]');
+      if (!await longTool.getByTestId("bash-output-preview-full").isVisible()) await longTool.getByTestId("tool-summary-trigger-long-a").click();
+      await longTool.getByText("RUNNING_CHILD_PREVIEW_a", { exact: true }).waitFor({ timeout: 10000 });
+      assert.equal(await page.getByTestId("v4-composer-background-work-trigger").count(), 1, "Running child with tool output keeps its robot");
       await page.getByTestId("complete-native-children").click();
       await page.locator('main[data-stage="completed"]').waitFor();
       assert.equal(await page.getByTestId("v4-composer-background-work-trigger").count(), 0, "Completed children must not retain the running robot");
       assert.equal(await spawnLinks.count(), 2, "Completion preserves both spawn records");
       await spawnLinks.first().click();
-      assert.equal(await page.getByTestId("selected-child").textContent(), "LIVE_CHILD_a_FINAL");
+      await childPane.getByText("LIVE_CHILD_a_FINAL", { exact: true }).waitFor({ timeout: 10000 });
       await page.reload();
       await page.locator('main[data-stage="completed"]').waitFor();
       assert.equal(await page.getByTestId("v4-composer-background-work-trigger").count(), 0);
       assert.equal(await spawnLinks.count(), 2, "Reload preserves completed spawn records");
       await spawnLinks.nth(1).click();
-      assert.equal(await page.getByTestId("selected-child").textContent(), "LIVE_CHILD_b_FINAL");
+      await childPane.getByText("LIVE_CHILD_b_FINAL", { exact: true }).waitFor({ timeout: 10000 });
+      await childPane.getByText("CHILD_ACTUAL_INPUT_b", { exact: true }).waitFor({ timeout: 10000 });
+      const recoveredTool = childPane.locator('[data-child-tool-id="long-b"]');
+      await recoveredTool.getByTestId("tool-summary-trigger-long-b").click();
+      assert.match(await recoveredTool.innerText(), /FINAL_CHILD_TOOL_b/);
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Completed spawn rows must fit the viewport");
       assert.deepEqual(errors, []);
       const artifacts = join(tmpdir(), "zcode-native-child-browser"); await mkdir(artifacts, { recursive: true });
