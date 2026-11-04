@@ -13,7 +13,7 @@
 
 ZCode-Codex integrates Codex into the [ZCode](https://github.com/zai-org/ZCode) AI coding workspace, preserving native ZCode features while making official Codex available through the ZCode interface. Install the Codex CLI separately; ZCode locates and starts it. This repository includes the desktop client, Web interface, shared UI and Agent CLI source.
 
-The development branch is `native-codex`; `main` preserves the upstream baseline. New projects default to ZCode; choosing Codex at creation fixes that project's sessions to Codex. Existing projects default to ZCode. Codex supports OpenAI Responses API key providers configured in ZCode and ChatGPT subscription login through Manage Models, without per-project environment variables. Subscription login and live child output are included in `v3.17.1-codex.2`; the subsequent title, encoded-input and browser-login fixes require a newer source build and are not yet in the public packages.
+The development branch is `native-codex`; `main` preserves the upstream baseline. New projects default to ZCode; choosing Codex at creation fixes that project's sessions to Codex. Existing projects default to ZCode. Codex supports OpenAI Responses API key providers configured in ZCode and ChatGPT subscription login through Manage Models, without per-project environment variables. Subscription login and live child output are included in `v3.17.1-codex.2`; the subsequent title, encoded-input and browser-login fixes are included in the Windows `v3.17.1-codex.3` package.
 
 ## Project strengths
 
@@ -43,7 +43,7 @@ The execution method is fixed after creation. Existing ZCode projects cannot be 
 
 ### Use a ChatGPT subscription
 
-Open **Settings → Manage Models → ChatGPT subscription (Codex)**. The current source and updated local desktop offer official browser login by default: click Sign in through browser, then open the authorization page to complete login. A separate device-code option remains available; updated Web uses device codes. A device-code request can fail even when Codex is installed (HTTP 403 was reproduced locally). The public `v3.17.1-codex.2` packages do not yet include browser login.
+Open **Settings → Manage Models → ChatGPT subscription (Codex)**. The `v3.17.1-codex.3` desktop offers official browser login by default: click Sign in through browser, then open the authorization page to complete login. A separate device-code option remains available; updated Web uses device codes. A device-code request can fail even when Codex is installed (HTTP 403 was reproduced locally). Older `.2` packages do not include browser login.
 
 After signing in, open a Codex project and select the **ChatGPT subscription** group and a model in the model selector. The catalog comes from official Codex; listing a model does not guarantee account quota or server permission. Rejections remain visible and never trigger a switch to API billing. If the official page returns `unsupported_country_region_territory`, OpenAI has rejected the current access region; a ZCode change cannot remove that restriction. Browser authorization startup, polling, cancellation and retry have been verified; actual account authorization and subscription inference have not been established.
 
@@ -77,23 +77,25 @@ Create the Codex project and save delegation settings **on the desktop first**, 
 
 ### Platform packages
 
-**[Download the complete Windows x64 EXE installer](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.2/ZCode-Codex-3.17.1-preview.2-win-x64.exe)** · [SHA256 manifest](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.2/SHA256SUMS-win-x64.txt) · [All platforms and release notes](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.2)
+**[Download the new complete Windows x64 EXE installer](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.3/ZCode-Codex-3.17.1-preview.3-win-x64.exe)** · [SHA256 manifest](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.3/SHA256SUMS-win-x64.txt) · [New release notes](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.3) · [Older macOS/Linux packages](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.2)
 
 | Platform | Source packaging targets | Formats | Branch validation |
 | --- | --- | --- | --- |
-| Windows | x64, arm64 | `.exe` installer | x64 preview installer published; portable runtime validated locally, clean-machine installation awaits acceptance |
-| macOS | Apple Silicon arm64, Intel x64 | `.dmg`, `.zip` | Both architectures built and published; actual desktop runtime awaits acceptance |
-| Linux | x64, arm64 | `.AppImage`, `.deb`, `.rpm`, `.pkg.tar.zst` | All four x64 formats built and published; arm64 builds and actual desktop runtime await acceptance |
+| Windows | x64, arm64 | `.exe` installer | x64 `.3` rebuilt and published; clean-machine installation awaits acceptance; arm64 unpublished |
+| macOS | Apple Silicon arm64, Intel x64 | `.dmg`, `.zip` | Older `.2` published for both architectures; `.3` builds queued; actual desktop runtime awaits acceptance |
+| Linux | x64, arm64 | `.AppImage`, `.deb`, `.rpm`, `.pkg.tar.zst` | Older `.2` published in all four x64 formats; `.3` builds queued; arm64 builds and actual desktop runtime await acceptance |
 
 Download the actual attachments in this fork's [Releases](https://github.com/e0gd/ZCode-Codex/releases). No attachments means no published package; upstream installers do not contain this integration. Source commands appear below under Packaging. Codex is not bundled. To build a Preview application alongside the original while using the production backend, set `ZCODE_ENV=production` and `ZCODE_PREVIEW_IDENTITY=1`. Renaming the repository does not migrate application data or change an existing local installation's independent data.
 
-New preview: [v3.17.1-codex.2](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.2); platform availability depends on its actual attachments. **Windows x64 downloads are complete `.exe` installers**. Start the installed application from its icon or executable; PowerShell is unnecessary. The installed application is named **ZCode Preview**. Packages are unsigned and macOS builds are not notarized. Platform-specific SHA256 manifests are included. Exit and reopen the application after updating to activate new code. The previous `.1` release remains available in release history.
+New preview: [v3.17.1-codex.3](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.3); platform availability depends on its actual attachments. **Windows x64 downloads are complete `.exe` installers**. Start the installed application from its icon or executable; PowerShell is unnecessary. The installed application is named **ZCode Preview**. Packages are unsigned and macOS builds are not notarized. Platform-specific SHA256 manifests are included. Exit and reopen the application after updating to activate new code. Previous `.1` and `.2` releases remain available. Follow the [build run](https://github.com/e0gd/ZCode-Codex/actions/runs/41814005983) for queued macOS/Linux builds.
+
+The Windows `.3` installer comes from `c462acd5`, contains the title, encoded-input and browser-login fixes, and is 198,640,213 bytes. SHA256: `cbd7d82c07a31a800b0cd49df788563ee94378e41db9fa3165107d9ee0edf949`. These fixes are absent from `.2` packages.
 
 Use [Actions → Desktop packages](https://github.com/e0gd/ZCode-Codex/actions/workflows/desktop-packages.yml) to manually build Windows x64, macOS arm64/x64 and Linux x64. Successful jobs provide installers and SHA256 manifests as run artifacts. Availability depends on actual job results; see [build and download instructions](docs/testing/desktop-packages.md).
 
 ## Updates
 
-- **2026-11-04 follow-up fixes (source; public packages pending)**: Generate summarized Codex session titles after the first turn (`c40d750a`), decode `c2a-msg-v1:` task envelopes in child input/labels/cards (`12d30272`), and provide explicit desktop browser OAuth alongside device login with clearer device failures (`01a569d0`). Document official regional restrictions and validation limits. Standard Windows packages use the same seven 16–256 px, 32-bit icon frames as upstream; the low-resolution custom launcher icon affected local portable shortcuts only and was corrected locally, outside Git and Release artifacts.
+- **2026-11-04 Preview 3**: Rebuilt and published the complete Windows x64 EXE with summarized Codex session titles (`c40d750a`), decoded `c2a-msg-v1:` child input/labels/cards (`12d30272`), and desktop browser OAuth with clearer device failures (`01a569d0`). macOS/Linux builds remain queued. Official regional restrictions and real-account validation limits still apply. Standard Windows packages use the same seven 16–256 px, 32-bit icon frames as upstream; the low-resolution custom launcher icon affected local portable shortcuts only and was corrected locally, outside Git and Release artifacts.
 - **2026-11-04**: Added ChatGPT subscription login and a read-only official model catalog in Manage Models. Fixed official Codex 0.166 child-agent activity, robot-button visibility and background sessions. Child task input and command/tool output now appear while tasks are running. Updated platform downloads and release verification.
 - **2026-11-03**: Project engines, images, structured questions, automatic delegation setting and native child-agent visibility; fixed Host rejection of free-text questions.
 - **2026-10-30**: Updated to ZCode v3.17.1.

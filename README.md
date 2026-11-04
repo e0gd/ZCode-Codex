@@ -43,7 +43,7 @@ ZCode-Codex 是集成 Codex 的 [ZCode](https://github.com/zai-org/ZCode) AI 编
 
 ### 使用 ChatGPT 订阅
 
-打开 **设置 → 管理模型 → ChatGPT 订阅（Codex）**。最新源码及本机更新版的桌面入口默认使用官方浏览器登录：点击登录，再打开官方授权页面完成登录；也可选择设备码登录，在授权页面输入界面显示的设备码。新版 Web 保留设备码登录。设备码获取失败并不说明没安装 Codex；本机曾遇到官方设备码端点返回 403，可改用桌面浏览器登录。公开 `v3.17.1-codex.2` 安装包尚不含浏览器登录修复。
+打开 **设置 → 管理模型 → ChatGPT 订阅（Codex）**。`v3.17.1-codex.3` 的桌面入口默认使用官方浏览器登录：点击登录，再打开官方授权页面完成登录；也可选择设备码登录，在授权页面输入界面显示的设备码。新版 Web 保留设备码登录。设备码获取失败并不说明没安装 Codex；本机曾遇到官方设备码端点返回 403，可改用桌面浏览器登录。旧 `.2` 安装包不含浏览器登录修复。
 
 登录完成后，进入 Codex 项目，在模型选择器选择 **ChatGPT 订阅** 分组及模型。模型目录来自官方 Codex，目录出现并不保证账号额度或服务器权限；实际拒绝会明确报错，不自动转为 API 消费。
 
@@ -79,25 +79,25 @@ ZCode-Codex 是集成 Codex 的 [ZCode](https://github.com/zai-org/ZCode) AI 编
 
 ### 各系统安装包
 
-**[下载 Windows x64 完整 EXE 安装包](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.2/ZCode-Codex-3.17.1-preview.2-win-x64.exe)** · [SHA256 校验文件](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.2/SHA256SUMS-win-x64.txt) · [全部平台与发行说明](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.2)
+**[下载新版 Windows x64 完整 EXE 安装包](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.3/ZCode-Codex-3.17.1-preview.3-win-x64.exe)** · [SHA256 校验文件](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.3/SHA256SUMS-win-x64.txt) · [新版发行说明](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.3) · [旧版 macOS／Linux 包](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.2)
 
 | 系统 | 源码打包架构 | 产物格式 | 本分支验证状态 |
 | --- | --- | --- | --- |
-| Windows | x64、arm64 | `.exe` 安装程序 | x64 预览安装包已发布；便携目录通过本地运行验证，干净机器安装待验收 |
-| macOS | Apple Silicon arm64、Intel x64 | `.dmg`、`.zip` | 两种架构均已构建并发布；真实桌面运行待验收 |
-| Linux | x64、arm64 | `.AppImage`、`.deb`、`.rpm`、`.pkg.tar.zst` | x64 四种格式均已构建并发布；arm64 构建与真实桌面运行待验收 |
+| Windows | x64、arm64 | `.exe` 安装程序 | x64 `.3` 已完整重建并发布；干净机器安装待验收，arm64 未发布 |
+| macOS | Apple Silicon arm64、Intel x64 | `.dmg`、`.zip` | 两种架构的旧 `.2` 已发布；`.3` 构建排队，真实桌面运行待验收 |
+| Linux | x64、arm64 | `.AppImage`、`.deb`、`.rpm`、`.pkg.tar.zst` | x64 旧 `.2` 四种格式已发布；`.3` 构建排队，arm64 构建与真实桌面运行待验收 |
 
 公开安装包以本仓库 [Releases](https://github.com/e0gd/ZCode-Codex/releases) 实际附件为准；没有附件表示尚未发布，上游安装包不包含修改版功能。各系统的源码构建命令见下方“打包”。Codex 不随安装包内置。自行打包要与原版并排安装时，设置 `ZCODE_ENV=production`、`ZCODE_PREVIEW_IDENTITY=1`。仓库改名不会自动迁移原版数据，也不会改变已有本地修改版的独立数据。
 
-新版预览：[v3.17.1-codex.2](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.2)，各平台是否完成发布以该页实际附件为准。**Windows x64 下载 `.exe` 完整安装程序**，安装后通过应用图标或 EXE 启动，无需 PowerShell。安装后应用名为 **ZCode Preview**；预览包未签名，macOS 包未公证。各平台附带 SHA256 校验文件。更新后需退出并重新打开应用才能使用新代码；旧版 `.1` 下载保留在历史 Release 中。
+新版预览：[v3.17.1-codex.3](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.3)，各平台是否完成发布以该页实际附件为准。**Windows x64 下载 `.exe` 完整安装程序**，安装后通过应用图标或 EXE 启动，无需 PowerShell。安装后应用名为 **ZCode Preview**；预览包未签名，macOS 包未公证。各平台附带 SHA256 校验文件。更新后需退出并重新打开应用才能使用新代码；旧版 `.1`、`.2` 下载保留在历史 Release 中。macOS／Linux 新版进度见[构建任务](https://github.com/e0gd/ZCode-Codex/actions/runs/41814005983)。
 
-**源码与安装包的版本差异**：`native-codex` 分支已包含会话自动总结标题、子 Agent 输入编码解码和 ChatGPT 浏览器登录修复；公开 `.2` 安装包尚不包含这三项，下载旧包不会获得这些修复。本机便携版快捷方式曾引用 32×32 低色深图标，已在本机改用高清图标；标准 Windows 安装包使用与原版相同的 16–256 像素、32 位色深资源，不经过该本机启动器。这项快捷方式调整不属于源码或 Release 更新。
+**本次安装包更新**：Windows `.3` 来自 `c462acd5`，包含会话自动总结标题、子 Agent 输入编码解码和 ChatGPT 浏览器登录修复；旧 `.2` 不含这三项。新 EXE 为 198,640,213 字节，SHA256 为 `cbd7d82c07a31a800b0cd49df788563ee94378e41db9fa3165107d9ee0edf949`。本机便携版快捷方式曾引用 32×32 低色深图标，已在本机改用高清图标；标准 Windows 安装包使用与原版相同的 16–256 像素、32 位色深资源，不经过该本机启动器。这项快捷方式调整不属于源码或 Release 更新。
 
 也可在 [Actions → Desktop packages](https://github.com/e0gd/ZCode-Codex/actions/workflows/desktop-packages.yml) 手动构建 Windows x64、macOS arm64/x64 和 Linux x64，成功的任务提供安装包与 SHA256 校验文件。当前是构建入口，实际可下载状态以任务结果为准；[构建与下载说明](docs/testing/desktop-packages.md) 包含限制和操作步骤。
 
 ## 更新
 
-- **2026-11-04 后续修复（源码，公开安装包待更新）**：Codex 首轮完成后自动总结会话标题（`c40d750a`）；子 Agent 输入、标签和派生卡片解码 `c2a-msg-v1:` 封装（`12d30272`）；桌面增加官方浏览器登录，保留设备码入口，并明确设备授权失败提示（`01a569d0`）。补充官方地区限制、实际登录验证边界及图标资源说明。
+- **2026-11-04 Preview 3**：Windows x64 完整 EXE 已重建发布，包含 Codex 首轮完成后自动总结会话标题（`c40d750a`）、子 Agent 输入／标签／派生卡片的 `c2a-msg-v1:` 解码（`12d30272`）、桌面官方浏览器登录及设备授权失败提示（`01a569d0`）。macOS／Linux 新版构建仍在排队；官方地区限制及真实订阅验收边界仍适用。
 - **2026-11-04**：新增管理模型中的 ChatGPT 订阅登录和只读官方模型目录；修复官方 Codex 0.166 子 Agent 派生记录、机器人按钮及后台子会话显示；子任务输入和命令／工具输出可在运行中查看，无需等到任务结束。更新多系统下载与发布校验流程。
 - **2026-11-03**：在 ZCode 中集成 Codex，支持按项目选择执行方式、图片输入、交互提问、Codex 自动派生设置与子 Agent 可视化；修复纯文字提问被 Host 拒绝的问题。
 - **2026-10-30**：更新至 ZCode v3.17.1 版本。
