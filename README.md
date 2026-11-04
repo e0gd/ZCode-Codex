@@ -75,6 +75,8 @@ ZCode-Codex 是集成 Codex 的 [ZCode](https://github.com/zai-org/ZCode) AI 编
 
 ### 各系统安装包
 
+**[下载 Windows x64 完整 EXE 安装包](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.2/ZCode-Codex-3.17.1-preview.2-win-x64.exe)** · [SHA256 校验文件](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.2/SHA256SUMS-win-x64.txt) · [全部平台与发行说明](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.2)
+
 | 系统 | 源码打包架构 | 产物格式 | 本分支验证状态 |
 | --- | --- | --- | --- |
 | Windows | x64、arm64 | `.exe` 安装程序 | x64 预览安装包已发布；便携目录通过本地运行验证，干净机器安装待验收 |

@@ -75,6 +75,8 @@ Create the Codex project and save delegation settings **on the desktop first**, 
 
 ### Platform packages
 
+**[Download the complete Windows x64 EXE installer](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.2/ZCode-Codex-3.17.1-preview.2-win-x64.exe)** · [SHA256 manifest](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.2/SHA256SUMS-win-x64.txt) · [All platforms and release notes](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.2)
+
 | Platform | Source packaging targets | Formats | Branch validation |
 | --- | --- | --- | --- |
 | Windows | x64, arm64 | `.exe` installer | x64 preview installer published; portable runtime validated locally, clean-machine installation awaits acceptance |
