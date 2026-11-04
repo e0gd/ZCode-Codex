@@ -406,6 +406,7 @@ function arePromptHistoryEntriesEqual(left: readonly string[], right: readonly s
 }
 
 export interface ConversationComposerProps {
+  executionEngine?: "zcode" | "codex" | null;
   snapshot: ConversationSnapshot | null;
   /** 真实命令已发出、权威输入投影尚未接管；直接消费 projection store，不另存展示状态。 */
   inputPending?: boolean;
@@ -604,6 +605,7 @@ function ConversationComposerImpl({
   workspaceIdentity,
   remoteSessionId,
   modelSelectionView = null,
+  executionEngine,
   modelSelectionState = MODEL_SELECTION_LOADING_STATE,
   modelSelectionReload,
   modelSelectionRefresh,
@@ -2513,6 +2515,7 @@ function ConversationComposerImpl({
         {remoteAvailable ? (
           <span className="flex min-w-0 shrink items-center gap-1 overflow-hidden empty:hidden">
             <V4ComposerModelControls
+              executionEngine={executionEngine}
               workspacePath={workspacePath}
               workspaceIdentity={workspaceIdentity}
               modelSelectionView={modelSelectionView}
@@ -2605,6 +2608,7 @@ function ConversationComposerImpl({
       modelSelectionRefresh,
       modelSelectionState,
       modelSelectionView,
+      executionEngine,
       onSelectThought,
       onRecoverCustomModelSelection,
       onSendCompressionCommand,

@@ -4243,12 +4243,33 @@ export const sessionLifecycleSnapshotSchema = z
   })
   .strict();
 export const sessionLifecycleResultSchema = z.object({ completed: z.literal(true) }).strict();
+
+// Only safe account/catalog projections cross the Host boundary; credentials remain in Codex.
+export const codexSubscriptionModelSchema = z.object({
+  id: z.string().min(1), model: z.string().min(1), displayName: z.string(),
+  supportedReasoningEfforts: z.array(z.object({ reasoningEffort: z.string().min(1), description: z.string() }).strict()),
+  defaultReasoningEffort: z.string(), inputModalities: z.array(z.string()),
+}).strict();
+export const codexAccountCommandSchema = z.object({
+  action: z.enum(["read", "refresh", "login", "cancel", "logout"]),
+  loginId: z.string().min(1).optional(),
+}).strict();
+export const codexAccountStateSchema = z.object({
+  status: z.enum(["signed-out", "logging-in", "signed-in", "error"]),
+  account: z.object({ email: z.string(), planType: z.string() }).strict().optional(),
+  login: z.object({ loginId: z.string().min(1), verificationUrl: z.string().url(), userCode: z.string().min(1) }).strict().optional(),
+  models: z.array(codexSubscriptionModelSchema), error: z.string().optional(),
+}).strict();
+export type CodexSubscriptionModel = z.infer<typeof codexSubscriptionModelSchema>;
+export type CodexAccountCommand = z.infer<typeof codexAccountCommandSchema>;
+export type CodexAccountState = z.infer<typeof codexAccountStateSchema>;
 export type SessionLifecycleState = z.infer<typeof sessionLifecycleStateSchema>;
 export type SessionLifecycleOperation = z.infer<typeof sessionLifecycleOperationSchema>;
 export type SessionLifecycleFailure = z.infer<typeof sessionLifecycleFailureSchema>;
 export type SessionLifecycleSnapshot = z.infer<typeof sessionLifecycleSnapshotSchema>;
 
 export const zcodeProtocolMethods = {
+  codexAccount: "codex/account",
   sessionLifecycleChanged: "session/lifecycle/changed",
   sessionLifecycleGetState: "session/lifecycle/getState",
   sessionLifecycleEnsureReady: "session/lifecycle/ensureReady",

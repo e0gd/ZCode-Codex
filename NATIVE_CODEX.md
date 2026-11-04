@@ -17,9 +17,19 @@ pnpm --filter '@zcode/cli...' build
 
 Install the official Codex CLI separately, then launch ZCode through its normal development/build entry point. In **Create project**, choose **Execution engine → Codex** and save. The engine is fixed after creation and appears read-only when editing a project. Restoring a deleted project retains its original choice; opening an existing directory and reusing a project also retains its engine. Tasks can move only between projects with the same engine.
 
-Codex uses the API provider and model configured in ZCode; the current integration supports OpenAI Responses with an API key. It locates the official executable when needed and uses separate Codex storage without changing the user's existing Codex configuration or credentials. Missing Codex or an incompatible API configuration produces an explicit error. Normal project selection requires no workspace environment variables. Explicit executable and isolated-home overrides remain available for deployment and tests. On remote projects, installation and execution belong to the owning Host.
+Codex uses an OpenAI Responses API key provider configured in ZCode or the dedicated ChatGPT subscription login in Manage Models. It locates the official executable when needed and uses separate Codex storage without changing the user's pre-existing Codex configuration or credentials. Official Codex owns subscription credentials in that isolated home; they are not copied into API provider configuration. Missing Codex, incompatible configuration or unavailable authentication produces an explicit error without switching sources. Normal project selection requires no workspace environment variables. Explicit executable and isolated-home overrides remain available for deployment and tests. On remote projects, installation and execution belong to the owning Host.
 
 See [the project execution-engine specification](docs/specs/project-execution-engine.md) for project ownership and compatibility rules, and [the executor specification](apps/zcode-cli/docs/design/v2/native-codex-executor.md) for permissions, model selection, and recovery details. Keep credentials outside the repository.
+
+## ChatGPT subscription login
+
+In a client built with this feature, open **Settings → Manage Models → ChatGPT subscription (Codex)** and sign in using the displayed device code on the official authorization page. In a Codex project, choose the **ChatGPT subscription** group and a model. The official Codex catalog supplies model IDs and reasoning efforts; its entries do not guarantee account quota or server permission. Actual execution can still be rejected, and rejection never triggers API fallback.
+
+Official model IDs, capability definitions, authentication and connection settings are read-only. Choosing another subscription model or supported reasoning level takes effect on subsequent inputs, while an executing turn keeps its resolved configuration. Older Web clients cannot rewrite the official definitions or replace subscription authentication; incompatible writes are rejected and the existing configuration is retained.
+
+Official Codex 0.166 does not support resuming an existing thread across API and ChatGPT subscription authentication sources. Create a new task in the same Codex project when switching sources; the original task, thread and history remain intact. The integration never silently forks or replays the original input to make that switch.
+
+The current official hosted website has no subscription login card. Manage login on the modified desktop, then continue an existing subscription task from Web/mobile; model catalog visibility depends on the older frontend's compatibility. The updated source Web UI can manage the same Host's account but requires a separate deployment. A local build or source change does not update published Releases or the hosted website. Real-account browser authorization and subscription inference remain pending acceptance; controlled tests do not establish those results. See [the subscription specification](docs/specs/codex-chatgpt-subscription.md) for ownership and failure behavior.
 
 ## Status and limits
 

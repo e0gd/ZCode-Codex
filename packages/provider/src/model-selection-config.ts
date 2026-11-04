@@ -43,6 +43,8 @@ export function resolveInitialModelSelection(input: {
   // 仅用于全新草稿的 Host 初始推荐；历史未绑定状态不能进入这个初始化分支。
   for (const provider of input.registry.providers) {
     if (provider.config.visibility === "hidden") continue;
+    // 订阅是用户显式选择的认证/计费来源；API 默认失效时不能自动切换到订阅。
+    if (provider.config.access.type === "codex-chatgpt") continue;
     for (const model of provider.models) {
       const selection = completeNewModelSelection(input.registry, {
         providerId: provider.providerId,

@@ -383,6 +383,7 @@ function resolveContextCodingPlanUsageSource(params: {
 }
 
 export interface V4ComposerToolbarProps {
+  executionEngine?: "zcode" | "codex" | null;
   workspacePath: string;
   workspaceIdentity?: string;
   modelSelectionView?: ModelSelectionView | null;
@@ -443,6 +444,7 @@ function V4ComposerModelControlsImpl({
   workspacePath,
   workspaceIdentity,
   modelSelectionView = null,
+  executionEngine,
   modelSelectionState = MODEL_SELECTION_LOADING_STATE,
   modelSelectionReload,
   modelSelectionRefresh,
@@ -873,13 +875,19 @@ function V4ComposerModelControlsImpl({
       teamPlanFallbackLabel: intl.formatMessage({
         id: "settings.modelProvider.connectionMode.teamPlan",
       }),
+      chatgptSubscriptionLabel: intl.formatMessage({ id: "settings.codexSubscription.title" }),
     }),
     [intl],
   );
   const modelSelectGroups = useMemo<ModelSelectGroup[]>(() => {
     if (!modelSelectionView) return [];
-    return buildRegistryModelSelectGroups(displayProvider, modelSelectionView, modelGroupLabels);
-  }, [displayProvider, modelGroupLabels, modelSelectionView]);
+    return buildRegistryModelSelectGroups(
+      displayProvider,
+      modelSelectionView,
+      modelGroupLabels,
+      executionEngine,
+    );
+  }, [displayProvider, modelGroupLabels, modelSelectionView, executionEngine]);
 
   // 修复：恢复「管理模型」入口（老版 onManageModels = 打开设置页并定位模型供应商区）。
   const handleOpenModelProviderSettings = useCallback(() => {

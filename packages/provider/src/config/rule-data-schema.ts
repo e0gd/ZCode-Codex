@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { modelConfigDataSchema } from "@zcode/shared/model-config";
 import { manualModelConfigSchema } from "./manual-model-config.js";
+import {
+  CODEX_SUBSCRIPTION_PROVIDER_ID,
+  CODEX_SUBSCRIPTION_DISPLAY_ENDPOINT,
+} from "./provider-config.js";
 export { manualModelConfigSchema, type ManualModelConfig } from "./manual-model-config.js";
 import {
   apiKeyAccessDataSchema,
@@ -113,6 +117,22 @@ export const personalProviderConfigRuleSchema = providerConfigRuleSchema
     }),
   })
   .superRefine((rule, context) => {
+    const subscription = rule.providerId === CODEX_SUBSCRIPTION_PROVIDER_ID;
+    if (
+      (subscription &&
+        (rule.config.access?.type !== "codex-chatgpt" ||
+          rule.config.api?.type !== "openai-responses" ||
+          rule.config.api.baseUrl !== CODEX_SUBSCRIPTION_DISPLAY_ENDPOINT ||
+          (rule.config.api.headers != null && Object.keys(rule.config.api.headers).length > 0) ||
+          rule.templateId != null)) ||
+      (!subscription && rule.config.access?.type === "codex-chatgpt")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["config", "access"],
+        message: "ChatGPT subscription identity and connection are managed by Codex.",
+      });
+    }
     if (rule.providerId.startsWith("account:") && rule.config.access !== undefined) {
       context.addIssue({
         code: "custom",

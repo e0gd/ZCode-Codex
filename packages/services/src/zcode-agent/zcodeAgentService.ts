@@ -1,4 +1,4 @@
-import { sessionLifecycleSnapshotSchema, type SessionLifecycleSnapshot } from "@zcode/shared";
+import { sessionLifecycleSnapshotSchema, type SessionLifecycleSnapshot, codexAccountCommandSchema, codexAccountStateSchema } from "@zcode/shared";
 import {
   getNetworkErrorCodes,
   isNetworkFailure,
@@ -4719,6 +4719,12 @@ export function createZCodeAgentService(
         getPluginManagementClient(),
       );
       return client.request(V4_METHODS.sessionDataPurge, params, v4SessionDataPurgeResultSchema);
+    },
+
+    async codexAccount(params) {
+      // 管理面进程唯一持有 pending login；切换活动项目不能中断设备授权。
+      const client = await getPluginManagementClient();
+      return client.request(zcodeProtocolMethods.codexAccount, codexAccountCommandSchema.parse(params), codexAccountStateSchema);
     },
 
     async getTaskTokenUsage(params: ZCodeAgentTaskTokenUsageParams) {

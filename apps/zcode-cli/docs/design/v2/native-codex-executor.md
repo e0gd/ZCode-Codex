@@ -10,6 +10,16 @@ The environment factory below remains a compatibility entry for standalone exper
 
 ## Configuration and precedence
 
+### Managed ChatGPT subscription (2026-11-04)
+
+The protected `chatgpt-subscription` provider uses `codex-chatgpt` access and resolves to the native port's `authMode: "chatgpt"` branch. Manage Models calls `codex/account` through the existing Host management carrier. One account controller owns each CLI process's login connection, pending device authorization, cancellation and safe account/catalog projection. Credentials stay in the existing isolated Codex home; provider config and remote RPC contain metadata only. Use the official built-in `openai` provider, forced ChatGPT authentication and a scrubbed child environment, never an API alias/key or provider-table override (the installed 0.166 binary rejects overriding the reserved `openai` provider).
+
+Before dispatch, validate official `account/read` and the exact `model/list` model/effort. Official reasoning efforts are extensible strings (`max` and `ultra` occur in 0.166), so validate bounded slugs and exact catalog membership rather than a six-value subscription enum. Discovery does not prove entitlement or remaining quota. A saved API thread cannot change to a subscription provider; fail with `NATIVE_CODEX_AUTH_SOURCE_MISMATCH` before input receipt/dispatch and preserve history. Missing subscription login and unavailable model/effort use `NATIVE_CODEX_SUBSCRIPTION_AUTH_REQUIRED` / `NATIVE_CODEX_SUBSCRIPTION_MODEL_UNAVAILABLE`. Core exposes fixed safe messages through the existing error path. No fallback, input replay or implicit thread fork is allowed. The ordinary API engine rejects subscription access before constructing an SDK client.
+
+The account controller alone publishes official metadata through the config owner's dedicated catalog operation. Generic provider/model edits, imports and direct provisioning writes are checked within the personal repository's file lock; they cannot mutate subscription identity or official model definitions. Preserve existing default selection and user enable/order preferences; repeated unchanged publication does not write or broadcast. Full product, legacy Web editing and acceptance contract: [ChatGPT subscription](../../../../../docs/specs/codex-chatgpt-subscription.md).
+
+### Standalone compatibility environment
+
 The isolated launch environment is an explicit deployment opt-in; it does not modify installed application settings or user configuration. Bootstrap calls `createNativeCodexExecutorFromEnv(workingDirectory, options.env ?? process.env)`. A supplied `options.env` is the selected environment, not implicitly merged with the process environment. The adapter factory accepts an explicit environment for tests and embedded callers.
 
 - `ZCODE_CODEX_WORKSPACE`: required opt-in, exact absolute workspace path. Unset or a different normalized path returns no executor and leaves the existing engine in place. Matching uses Windows case normalization on Windows; execution verifies the canonical real path. Basename/prefix matching is forbidden. A matching configuration that fails validation errors visibly; it must not silently fall back to the model loop.

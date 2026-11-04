@@ -78,6 +78,9 @@ export class ApiProviderModelRuntime {
     registryModel: ProviderModel,
     target: Parameters<RuntimeModelFactory>[0],
   ): Model {
+    if (provider.config.access.type === "codex-chatgpt") {
+      throw new Error("ChatGPT subscription is available only in Codex projects. Create a Codex project to use this account.");
+    }
     const config = registryModel.config;
     // 输出预算属于单次请求，由 Agent 执行链显式决定，不能在 ModelFactory 中静默绑定。
     // Selection 已在上面的 Registry 边界完成校验，Factory 不再承担任何缺省修复。

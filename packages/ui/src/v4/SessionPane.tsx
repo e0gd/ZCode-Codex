@@ -16,7 +16,10 @@ import { reportSessionCreate } from "@/lib/sessionCreateTelemetry.js";
 import { getLocalTtftObserver } from "@/v4/telemetry/local-ttft/contract.js";
 import { BotGroupDeliveryProvider } from "@/v4/BotGroupDeliveryAction.js";
 /* oxlint-disable eslint(max-lines) -- SessionPane 是单 pane 竖切的命令编排收口（订阅/发送/停止/fork/edit/retry/queue/slash 全集），与旧 ChatView 同粒度；HEAD 已超限（693 行计数），拆散命令组会打散 dispatchCommand/snapshotRef 的闭包纪律。 */
-import { useOptionalProjectDirectoryActions } from "@/project-sidebar/index.js";
+import {
+  useOptionalProjectDirectoryActions,
+  useProjectExecutionEngine,
+} from "@/project-sidebar/index.js";
 import { useIsOfficeMode } from "@/hooks/useInterfaceMode.js";
 import {
   useCallback,
@@ -703,6 +706,18 @@ export function SessionPane({
     () => resolveComposerScope(composerProjectId, workspaceIdentity, composerClientNamespace),
     [composerProjectId, workspaceIdentity, composerClientNamespace],
   );
+  const composerExecutionEngine = useProjectExecutionEngine({
+    hostId: newTaskComposerScope.hostId,
+    ...(sessionId
+      ? {
+          task: {
+            taskId: sessionId,
+            workspacePath,
+            ...(workspaceIdentity ? { workspaceIdentity } : {}),
+          },
+        }
+      : { projectId: newTaskComposerScope.projectId }),
+  });
   const composerDraftGeneration = useZCodeSessionStore(
     (store) => store.getWorkspaceState(workspacePath, workspaceIdentity).draftFocusVersion,
   );
@@ -1797,6 +1812,7 @@ export function SessionPane({
     updateComposerContent,
     persistComposerContent,
   } = useDraftConfigControl({
+    executionEngine: composerExecutionEngine,
     workspacePath,
     workspaceIdentity,
     provider,
@@ -5536,6 +5552,7 @@ export function SessionPane({
   // 若仍创建 composer，会让用户误以为可以直接向 child session 继续输入。
   const composerNode = readOnly ? null : (
     <ConversationComposer
+      executionEngine={composerExecutionEngine}
       key="conversation-composer"
       // Snapshot 仍服务用量、路由与运行态；工具栏的 mode/model 只读下方 Composer Draft。
       snapshot={snapshot}

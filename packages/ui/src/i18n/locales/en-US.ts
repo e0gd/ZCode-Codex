@@ -1,6 +1,34 @@
 import { requestSecurityMessagesEnUS } from "@/request-security-edition/messages.js";
 /** English translations */
 const enUS: Record<string, string> = {
+  "settings.codexSubscription.title": "ChatGPT subscription (Codex)",
+  "settings.codexSubscription.description":
+    "For Codex projects only. Choose ChatGPT subscription in the model picker. Model changes within a subscription apply to the next message. Start a new task when switching between API and subscription authentication.",
+  "settings.codexSubscription.status.loading":
+    "Reading Codex login status on the connected computer…",
+  "settings.codexSubscription.status.signed-out": "Not signed in",
+  "settings.codexSubscription.status.logging-in": "Waiting for official authorization",
+  "settings.codexSubscription.status.signed-in": "Signed in to ChatGPT",
+  "settings.codexSubscription.status.error": "Subscription status unavailable",
+  "settings.codexSubscription.login": "Sign in with ChatGPT",
+  "settings.codexSubscription.logout": "Sign out",
+  "settings.codexSubscription.cancel": "Cancel sign-in",
+  "settings.codexSubscription.refresh": "Refresh status",
+  "settings.codexSubscription.error":
+    "The subscription operation could not complete. Check the official Codex installation on the connected computer and the connection, then refresh to retry.",
+  "settings.codexSubscription.deviceInstructions":
+    "Open the official authorization page and enter this code. You can authorize on a computer or phone; the connected computer manages the login.",
+  "settings.codexSubscription.openAuthorization": "Open official authorization page",
+  "settings.codexSubscription.invalidUrl":
+    "The authorization address could not be verified. Cancel sign-in and try again.",
+  "settings.codexSubscription.models": "Official model catalog",
+  "settings.codexSubscription.reasoning": "Supported reasoning efforts",
+  "settings.codexSubscription.catalogHint":
+    "The official Codex catalog is read-only. Access and limits depend on the account and official response. Unavailable models produce an error without automatically switching to API access.",
+  "settings.codexSubscription.emptyCatalog":
+    "No official models are available yet. Refresh to try again.",
+  "settings.codexSubscription.protectedDetail":
+    "Use the ChatGPT subscription card above to sign in, refresh and view official models. Authentication, connection addresses and official model definitions cannot be changed through the custom API editor.",
   "preview.image.copy": "Copy image",
   "preview.image.actions": "Image actions",
   "preview.image.added": "Added to chat",
@@ -276,8 +304,10 @@ const enUS: Record<string, string> = {
     "Group folders on the same host. Existing tasks keep their working directory.",
   "project.name": "Project name",
   "project.engine": "Execution engine",
-  "project.engineImmutable": "A project's engine cannot be changed after creation. Create a new project instead.",
-  "project.engineMismatch": "This conversation cannot be moved to a project with a different execution engine.",
+  "project.engineImmutable":
+    "A project's engine cannot be changed after creation. Create a new project instead.",
+  "project.engineMismatch":
+    "This conversation cannot be moved to a project with a different execution engine.",
   "project.engineZcode": "ZCode",
   "project.engineCodex": "Codex",
   "project.engineDescription":

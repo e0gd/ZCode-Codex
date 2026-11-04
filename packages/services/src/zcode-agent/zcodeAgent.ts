@@ -1,4 +1,5 @@
 import type { PluginUiToolResultNotification } from "@zcode/shared/mcp-apps";
+import type { CodexAccountCommand, CodexAccountState } from "@zcode/shared";
 import type {
   BackgroundBashOutputResult,
   SessionDebugSnapshot,
@@ -686,6 +687,7 @@ export interface IZCodeAgentService {
   purgeSessionData?(
     params: V4SessionDataParams & { workspace: ZCodeAgentWorkspaceTarget },
   ): Promise<V4SessionDataPurgeResult>;
+  codexAccount?(params: CodexAccountCommand): Promise<CodexAccountState>;
   getTaskTokenUsage(params: ZCodeAgentTaskTokenUsageParams): Promise<ZCodeTaskTokenUsageResult>;
   readSession(params: ZCodeAgentReadSessionParams): Promise<ZCodeSessionStateSnapshot>;
   readSessionMessages(

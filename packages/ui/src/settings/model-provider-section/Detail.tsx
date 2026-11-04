@@ -839,6 +839,19 @@ export function ModelProviderSectionDetail({
   }
 
   const customProvider = selectedNavItem.provider;
+  if (customProvider.providerId === "chatgpt-subscription") {
+    // 订阅认证和官方模型目录属于 Codex；通用 API 表单不能改写身份、端点或模型定义。
+    return (
+      <div className="space-y-3" data-testid="codex-subscription-protected-detail">
+        <h2 className="text-ui-lg font-semibold text-foreground">
+          {intl.formatMessage({ id: "settings.codexSubscription.title" })}
+        </h2>
+        <p className="text-ui-base text-foreground-subtle">
+          {intl.formatMessage({ id: "settings.codexSubscription.protectedDetail" })}
+        </p>
+      </div>
+    );
+  }
   const customApiKeyUrl = customProvider.templateId
     ? getProviderFormApiKeyManagementUrl(customProvider)
     : undefined;

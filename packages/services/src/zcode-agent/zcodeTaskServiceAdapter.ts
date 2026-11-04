@@ -1748,6 +1748,12 @@ export function createZCodeTaskServiceAdapter(
       return { target: "zcode-agent", reachable: true };
     },
 
+    async codexAccount(params) {
+      if (!options.zcodeAgentService.codexAccount) throw new Error("ChatGPT subscription requires an updated ZCode client.");
+      // 登录属于当前设置目标 Environment；cwd/活动项目不得创建第二个认证 owner。
+      return options.zcodeAgentService.codexAccount({ action: params.action, ...(params.loginId ? { loginId: params.loginId } : {}) });
+    },
+
     async createTask(params): Promise<ZCodeTaskCreateResult> {
       const target = normalizeWorkspaceParams(params);
       const requestedSelection =

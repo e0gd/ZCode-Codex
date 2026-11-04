@@ -19,6 +19,30 @@ export interface ModelProviderGroupLabelOptions {
   startPlanBadgeLabel?: string;
   teamPlanBadgeLabel?: string;
   teamPlanFallbackLabel?: string;
+  chatgptSubscriptionLabel?: string;
+}
+
+/** 未确认 Codex 引擎时过滤订阅目录和隐含首选值；保留原意图，不自动切换计费来源。 */
+export function filterModelSelectionForExecutionEngine(
+  view: ModelSelectionView,
+  executionEngine: "zcode" | "codex" | null | undefined,
+): ModelSelectionView {
+  if (executionEngine === "codex") return view;
+  const providers = view.providers.filter(
+    (provider) =>
+      provider.providerId !== "chatgpt-subscription" &&
+      provider.config.access?.type !== "codex-chatgpt",
+  );
+  if (providers.length === view.providers.length) return view;
+  const visibleIds = new Set(providers.map((provider) => provider.providerId));
+  const filtered = { ...view, providers };
+  if (filtered.preferredSelection && !visibleIds.has(filtered.preferredSelection.providerId))
+    delete filtered.preferredSelection;
+  if (filtered.effectiveSelection && !visibleIds.has(filtered.effectiveSelection.providerId)) {
+    filtered.effectiveSelection = null;
+    filtered.selectionIssue = "provider-not-found";
+  }
+  return filtered;
 }
 
 function supportsRegistryApiFormat(
@@ -34,47 +58,58 @@ export function buildRegistryModelSelectGroups(
   selectedProvider: ZCodeProvider,
   view: ModelSelectionView,
   labels: ModelProviderGroupLabelOptions = {},
+  executionEngine?: "zcode" | "codex" | null,
 ): ModelSelectGroup[] {
-  return view.providers.flatMap((provider) => {
-    if (!supportsRegistryApiFormat(selectedProvider, provider.config.api?.type)) {
-      return [];
-    }
+  return filterModelSelectionForExecutionEngine(view, executionEngine).providers.flatMap(
+    (provider) => {
+      if (!supportsRegistryApiFormat(selectedProvider, provider.config.api?.type)) {
+        return [];
+      }
 
-    const accountAccess = zcodeProviderAccountAccessSchema.safeParse(provider.config.access);
-    const accountPresentation = accountAccess.success
-      ? getRegistryAccountProviderGroupPresentation(provider.providerId, accountAccess.data, labels)
-      : null;
-
-    // 合并菜单仍需区分同名供应商的接入方式；API 标识直接来自 access，不能从名称猜测。
-    const labelBadge =
-      accountPresentation?.labelBadge ??
-      (provider.config.access?.type === "api-key" ||
-      provider.config.access?.type === "zhipu-coding-plan-api-key"
-        ? (labels.apiKeyBadgeLabel ?? "API")
-        : undefined);
-
-    return [
-      {
-        key: `registry-provider:${provider.providerId}`,
-        label: accountPresentation?.label || provider.providerName?.trim() || provider.providerId,
-        ...(provider.config.logo ? { logo: provider.config.logo } : {}),
-        ...(labelBadge ? { labelBadge } : {}),
-        ...(accountPresentation ? { directItems: true } : {}),
-        items: provider.models.map(({ modelId, config }) => ({
-          key: `registry-provider:${provider.providerId}:${modelId}`,
-          value: encodeCustomModelValue(provider.providerId, modelId),
-          name: modelId,
-          ...(shouldShowModelVisionBadge(
-            modelId,
-            config.properties?.inputFormat?.supportsImage,
-            provider.config.access,
+      const accountAccess = zcodeProviderAccountAccessSchema.safeParse(provider.config.access);
+      const accountPresentation = accountAccess.success
+        ? getRegistryAccountProviderGroupPresentation(
+            provider.providerId,
+            accountAccess.data,
+            labels,
           )
-            ? { supportsVisionInput: true }
-            : {}),
-        })),
-      },
-    ];
-  });
+        : null;
+
+      // 合并菜单仍需区分同名供应商的接入方式；API 标识直接来自 access，不能从名称猜测。
+      const subscription = provider.config.access?.type === "codex-chatgpt";
+      const labelBadge = subscription
+        ? "ChatGPT"
+        : (accountPresentation?.labelBadge ??
+          (provider.config.access?.type === "api-key" ||
+          provider.config.access?.type === "zhipu-coding-plan-api-key"
+            ? (labels.apiKeyBadgeLabel ?? "API")
+            : undefined));
+
+      return [
+        {
+          key: `registry-provider:${provider.providerId}`,
+          label: subscription
+            ? (labels.chatgptSubscriptionLabel ?? "ChatGPT subscription (Codex)")
+            : accountPresentation?.label || provider.providerName?.trim() || provider.providerId,
+          ...(provider.config.logo ? { logo: provider.config.logo } : {}),
+          ...(labelBadge ? { labelBadge } : {}),
+          ...(accountPresentation ? { directItems: true } : {}),
+          items: provider.models.map(({ modelId, config }) => ({
+            key: `registry-provider:${provider.providerId}:${modelId}`,
+            value: encodeCustomModelValue(provider.providerId, modelId),
+            name: modelId,
+            ...(shouldShowModelVisionBadge(
+              modelId,
+              config.properties?.inputFormat?.supportsImage,
+              provider.config.access,
+            )
+              ? { supportsVisionInput: true }
+              : {}),
+          })),
+        },
+      ];
+    },
+  );
 }
 
 function getRegistryAccountProviderGroupPresentation(

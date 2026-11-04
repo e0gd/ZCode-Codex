@@ -396,6 +396,9 @@ export async function executeNativeTurn(
       NATIVE_CODEX_UNSUPPORTED_INTERACTION: "Codex requested an unsupported interaction. No permission was granted.",
       NATIVE_CODEX_FINAL_TEXT_MISMATCH: "Native final text disagrees with streamed text.",
       NATIVE_CODEX_RESPONSE_STREAM_FAILED: "Official Codex could not complete the response stream. Check the API provider and network before sending again.",
+      NATIVE_CODEX_AUTH_SOURCE_MISMATCH: "Create a new task to switch between an API provider and ChatGPT subscription. Your existing task history is preserved.",
+      NATIVE_CODEX_SUBSCRIPTION_AUTH_REQUIRED: "Sign in to ChatGPT subscription in Manage Models, then try again.",
+      NATIVE_CODEX_SUBSCRIPTION_MODEL_UNAVAILABLE: "This model or reasoning level is unavailable for ChatGPT subscription. Refresh the subscription model list in Manage Models and select an available model.",
     };
     const safeCode = typeof code === "string" && Object.hasOwn(safeMessages, code) ? code : "NATIVE_CODEX_TURN_FAILED";
     // 仅接收已分类断流错误的合法 HTTP 状态；不能把任意第三方字段带入诊断。

@@ -14,6 +14,7 @@ import type { McpTelemetryTracker } from "@zcode/adapters";
 import type { SessionDataFilesPort } from "@zcode/adapters/storage";
 import type { WorkspaceHookPolicyProvider } from "@zcode/core";
 import type { AccountProviderConfigSnapshot } from "@zcode/provider";
+import type { CodexAccountCommand, CodexAccountState } from "@zcode/shared";
 import {
   zcodeProtocolErrorCodes,
   type AppToolSearchMode,
@@ -69,6 +70,7 @@ export interface ZCodeProtocolAgentDependencies {
   syncAccountProviderConfig?: (snapshot: AccountProviderConfigSnapshot) => Promise<boolean>;
   /** 连接测试前主动重读当前进程的 Config Source 并等待 Registry 发布。 */
   refreshProviderRegistry?: (reason: string) => Promise<void>;
+  codexAccount?: (command: CodexAccountCommand) => Promise<CodexAccountState>;
 }
 
 export type ZCodeProtocolAgentResolvedDependencies = ZCodeProtocolAgentDependencies & {

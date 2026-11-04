@@ -13,14 +13,14 @@
 
 ZCode-Codex integrates Codex into the [ZCode](https://github.com/zai-org/ZCode) AI coding workspace, preserving native ZCode features while making official Codex available through the ZCode interface. Install the Codex CLI separately; ZCode locates and starts it. This repository includes the desktop client, Web interface, shared UI and Agent CLI source.
 
-The development branch is `native-codex`; `main` preserves the upstream baseline. New projects default to ZCode; choosing Codex at creation fixes that project's sessions to Codex. Existing projects default to ZCode. Codex uses the provider and model configured in ZCode, currently OpenAI Responses with an API key, without per-project environment variables.
+The development branch is `native-codex`; `main` preserves the upstream baseline. New projects default to ZCode; choosing Codex at creation fixes that project's sessions to Codex. Existing projects default to ZCode. Codex supports OpenAI Responses API key providers configured in ZCode and ChatGPT subscription login through Manage Models, without per-project environment variables. Subscription support requires a new client containing this change; existing Releases do not gain it automatically.
 
 ## Project strengths
 
 Codex integrates with ZCode's existing projects, sessions and interactions, so users can keep working in the familiar workspace:
 
 - **Choose ZCode or Codex per project**: New projects default to ZCode, with Codex available at creation. Both project types coexist in one client. The execution method is fixed after creation; existing projects keep using ZCode.
-- **Configure APIs in ZCode**: Codex uses the provider, model and reasoning level configured in ZCode, without separate Codex configuration for every project. Currently this requires an OpenAI Responses-compatible API key configuration; ChatGPT subscription login is not integrated.
+- **Manage authentication and models in ZCode**: Codex uses the API provider, model and reasoning level configured in ZCode, or ChatGPT subscription login through a dedicated entry. Official Codex manages subscription credentials separately from API provider configuration. The two sources remain distinct and never switch automatically.
 - **Continue the same session on desktop and Web/mobile**: Create a Codex project in the modified desktop, then continue from the official Web/mobile frontend connected to that desktop. New tasks inside that project also use Codex. The official frontend cannot currently create Codex projects or change this fork's new settings; see [Web/mobile limitations](#official-webmobile-limitations).
 - **Follow subagent progress**: Codex child agents use the existing status rows, composer robot button, background list and read-only child-session view. The desktop provides an automatic-delegation switch, off by default; saved changes apply on the next turn to both desktop and connected Web/mobile sessions. It controls delegation policy, not concurrency; see [subagent collaboration](#enable-parallel-codex-subagents).
 - **Use familiar input and confirmation flows**: Text, images, tool approvals and structured questions appear through ZCode's existing interface. Choice questions show buttons; free-text questions show an input field and wait for an explicit answer.
@@ -30,16 +30,26 @@ See [usage and limitations](NATIVE_CODEX.md) and [validation evidence](docs/test
 
 ## Installation and platforms
 
-Install the [official Codex CLI](https://github.com/openai/codex) separately, configure a compatible provider and model in ZCode, then select **Execution engine → Codex** when creating a project. Projects using ZCode do not require Codex.
+Install the [official Codex CLI](https://github.com/openai/codex) separately, configure a compatible provider and model in ZCode or sign in with ChatGPT, then select **Execution engine → Codex** when creating a project. Projects using ZCode do not require Codex.
 
 ### Create a Codex project
 
-1. Open this fork's desktop client and configure the API provider, API key and model in ZCode. Codex currently requires an OpenAI Responses-compatible configuration.
+1. Open this fork's desktop client containing the required feature and configure an OpenAI Responses-compatible API provider, API key and model in ZCode, or sign in with ChatGPT as described below.
 2. Open **Create project**, enter the project details and choose its directory.
 3. Change **Execution engine** from the default **ZCode** to **Codex**, then save.
 4. Create a task in that project and send a message. ZCode locates and starts the separately installed official Codex CLI when needed; that project's sessions execute through Codex.
 
 The execution method is fixed after creation. Existing ZCode projects cannot be converted by editing them; create a Codex project instead. Updating the client does not convert old projects.
+
+### Use a ChatGPT subscription
+
+Open **Settings → Manage Models → ChatGPT subscription (Codex)**, click Sign in, then enter the displayed device code on the official authorization page. After signing in, open a Codex project and select the **ChatGPT subscription** group and a model in the model selector. The catalog comes from official Codex; listing a model does not guarantee account quota or server permission. Rejections remain visible and never trigger a switch to API billing.
+
+Subscription model IDs, authentication, service addresses and capability definitions are read-only. The computer rejects incompatible edits from an older Web client and preserves the configuration. Choosing another subscription model or supported reasoning level applies to subsequent inputs; an executing response keeps its existing configuration. Official Codex 0.166 cannot resume an existing thread across API and subscription authentication sources. To switch sources, create a new task in the same Codex project; the original task and history remain intact.
+
+The current official website has no new subscription login card. Sign in on the modified desktop first, then continue an existing subscription task from the official website. Whether the older frontend recognizes the new model catalog depends on client compatibility; it cannot edit subscription definitions. The updated source Web UI can manage login through the same Host but requires a separate deployment.
+
+This describes the current source implementation, not a newly published Release. Real-account browser authorization and subscription inference still require acceptance testing.
 
 ### Enable parallel Codex subagents
 
@@ -56,6 +66,8 @@ The current `zcode.z.ai/remote/v4` frontend is hosted by the official website. I
 | Select Codex when creating a project | Available under Execution engine | No branch selector; cannot create a Codex project through that entry |
 | Change an existing project's execution method | Unsupported; fixed at creation | Unsupported |
 | Change automatic Codex delegation | Available under Codex collaboration | No switch; configure it on the executing computer |
+| Sign in to or out of ChatGPT subscription | Dedicated Manage Models entry in the updated client | No new card on the official website; manage it on the computer. Updated Web source requires a separate deployment |
+| Edit ChatGPT subscription model definitions or connections | Officially managed; read-only | Unsupported; the computer rejects incompatible edits and preserves the configuration |
 | Continue an existing Codex project's sessions | Supported | Supported when connected to the modified desktop; new tasks inside that project inherit Codex |
 | Use the desktop's saved delegation setting | Applied next turn | Applied next turn without a separate Web setting |
 

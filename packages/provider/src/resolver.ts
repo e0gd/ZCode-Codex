@@ -9,6 +9,7 @@ import type {
 import type { ConfigValidationIssue } from "./config-overlay.js";
 import {
   type ApiKeyAccessConfig,
+  type CodexChatGPTAccessConfig,
   ModelConfig,
   ModelConfigRules,
   type ZhipuAccountAccessConfig,
@@ -27,7 +28,8 @@ export type RegistryZhipuAccountAccessConfig = ZhipuAccountAccessConfig &
 
 export type RegistryProviderAccessConfig =
   | (ApiKeyAccessConfig & z.infer<typeof completeApiKeyAccessDataSchema>)
-  | RegistryZhipuAccountAccessConfig;
+  | RegistryZhipuAccountAccessConfig
+  | CodexChatGPTAccessConfig;
 
 export type RegistryProviderConfig = ProviderConfig &
   z.infer<typeof completeProviderConfigDataSchema> & {
@@ -43,20 +45,22 @@ export function serializeRegistryProviderConfig(
     group: config.group,
     ...(config.logo === undefined ? {} : { logo: config.logo }),
     access:
-      config.access.type !== "zhipu-account"
-        ? {
-            type: config.access.type,
-            apiKey: config.access.apiKey,
-            ...(config.access.apiKeyManagementUrl === undefined
-              ? {}
-              : { apiKeyManagementUrl: config.access.apiKeyManagementUrl }),
-          }
-        : {
-            type: config.access.type,
-            accountType: config.access.accountType,
-            mode: config.access.mode,
-            entitled: config.access.entitled,
-          },
+      config.access.type === "codex-chatgpt"
+        ? { type: "codex-chatgpt" }
+        : config.access.type !== "zhipu-account"
+          ? {
+              type: config.access.type,
+              apiKey: config.access.apiKey,
+              ...(config.access.apiKeyManagementUrl === undefined
+                ? {}
+                : { apiKeyManagementUrl: config.access.apiKeyManagementUrl }),
+            }
+          : {
+              type: config.access.type,
+              accountType: config.access.accountType,
+              mode: config.access.mode,
+              entitled: config.access.entitled,
+            },
     api: {
       type: config.api.type,
       baseUrl: config.api.baseUrl,

@@ -118,6 +118,7 @@ import {
 import { listPluginUiSurfaces } from "./plugin-ui-surfaces.js";
 import { updateInteractionPreferences } from "./interaction-preferences.js";
 import { refreshProviderRegistry, updateAccountProviderConfig } from "./account-provider-config.js";
+import { codexAccountCommandSchema, codexAccountStateSchema } from "@zcode/shared";
 import { updateModelIoPreferences } from "./model-io-preferences.js";
 import { updateOffPeakToolPolicy } from "./off-peak-tool-policy.js";
 import { updateDynamicWorkflowPolicy } from "./dynamic-workflow-policy.js";
@@ -580,6 +581,11 @@ export class ZCodeProtocolAgentServer {
 
   private async dispatchRequest(request: ZCodeProtocolRequest) {
     switch (request.method) {
+      case zcodeProtocolMethods.codexAccount: {
+        const command = codexAccountCommandSchema.parse(request.params);
+        if (!this.context.deps.codexAccount) throw new Error("ChatGPT subscription account management is unavailable.");
+        return codexAccountStateSchema.parse(await this.context.deps.codexAccount(command));
+      }
       // ── v4 conversation 通道（竖切，与旧 session/* 并存）──
       case V4_METHODS.connectionFlow: {
         this.requireV4Gateway().setConnectionFlowState(request.params);

@@ -3,6 +3,7 @@ import { ConfigOverlay, type ConfigValidationIssue } from "../config-overlay.js"
 import type { z } from "zod";
 import {
   completeApiKeyAccessDataSchema,
+  codexChatGPTAccessDataSchema,
   completeZhipuAccountAccessDataSchema,
   completeProviderApiDataSchema,
   completeProviderConfigDataSchema,
@@ -111,7 +112,29 @@ export class ZhipuAccountAccessConfig extends ConfigOverlay<ZhipuAccountAccessCo
   }
 }
 
-export type ProviderAccessConfig = ApiKeyAccessConfig | ZhipuAccountAccessConfig;
+export class CodexChatGPTAccessConfig extends ConfigOverlay<CodexChatGPTAccessConfig> {
+  readonly type = "codex-chatgpt" as const;
+  constructor() {
+    super();
+    Object.freeze(this);
+  }
+  overlay(_next: CodexChatGPTAccessConfig): CodexChatGPTAccessConfig {
+    return this;
+  }
+  validateComplete(path: readonly string[] = []): readonly ConfigValidationIssue[] {
+    return validateConfigSchema(codexChatGPTAccessDataSchema, this.toJSON(), path);
+  }
+  toJSON(): { readonly type: "codex-chatgpt" } {
+    return { type: this.type };
+  }
+}
+
+export const CODEX_SUBSCRIPTION_PROVIDER_ID = "chatgpt-subscription";
+export const CODEX_SUBSCRIPTION_DISPLAY_ENDPOINT = "https://chatgpt.com/backend-api/codex";
+export type ProviderAccessConfig =
+  | ApiKeyAccessConfig
+  | ZhipuAccountAccessConfig
+  | CodexChatGPTAccessConfig;
 
 export type ProviderAccessConfigObject = Readonly<z.infer<typeof providerAccessDataSchema>>;
 
@@ -505,6 +528,8 @@ function overlayProviderAccess(
       return current.overlay(next as ApiKeyAccessConfig);
     case "zhipu-account":
       return current.overlay(next as ZhipuAccountAccessConfig);
+    case "codex-chatgpt":
+      return current.overlay(next as CodexChatGPTAccessConfig);
   }
 }
 

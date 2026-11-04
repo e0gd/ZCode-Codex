@@ -26,15 +26,21 @@ export interface NativeSubagentUpdate {
   items: NativeSubagentItem[];
 }
 
-export type NativeCodexReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+/** Official protocol uses extensible effort strings; subscription turns validate against model/list. */
+export type NativeCodexReasoningEffort = string;
 
 /** Server-resolved transient launch data. Never accepted from submission payloads or persisted. */
-export interface NativeCodexModelConfig {
+export type NativeCodexModelConfig = {
+  readonly authMode?: "apiKey";
   readonly modelId: string;
   readonly baseUrl: string;
   readonly apiKey: string;
   readonly reasoningEffort?: NativeCodexReasoningEffort;
-}
+} | {
+  readonly authMode: "chatgpt";
+  readonly modelId: string;
+  readonly reasoningEffort?: NativeCodexReasoningEffort;
+};
 
 /** Validates the exact selection against configured providers; errors never trigger fallback. */
 export type NativeCodexModelResolver = (selection: ModelSelection) => NativeCodexModelConfig | Promise<NativeCodexModelConfig>;

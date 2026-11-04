@@ -26,7 +26,9 @@ export {
   ProjectDirectoryProvider,
   useOptionalProjectDirectory,
   useOptionalProjectDirectoryActions,
+  useProjectExecutionEngine,
 } from "@/project-sidebar/ProjectDirectoryProvider.js";
+export { resolveProjectExecutionEngine } from "@/project-sidebar/view.js";
 export { ProjectComposerMenu } from "@/project-sidebar/ProjectComposerMenu.js";
 import { useProjectTaskNavigation } from "@/project-sidebar/useProjectTaskNavigation.js";
 import { useProjectFileTree } from "@/project-sidebar/useProjectFileTree.js";

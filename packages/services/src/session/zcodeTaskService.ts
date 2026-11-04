@@ -1,5 +1,6 @@
 /* eslint-disable max-lines -- ZCode task wrapper service 接口集中承载 app/runtime API，拆散会让替换阶段更难追踪。 */
 import type { Event } from "@zcode/rpc";
+import type { CodexAccountCommand, CodexAccountState } from "@zcode/shared";
 import { ServiceChannels } from "@zcode/shared";
 import type { CommandPayloadMap } from "@zcode/shared/zcode-protocol-v4";
 import { createServiceDescriptor } from "#src/descriptors.js";
@@ -197,6 +198,7 @@ export interface IZCodeTaskService {
 
   /** Codex 草稿态预热前的网络检查，用于提前提醒 chatgpt.com 不可达 */
   checkCodexConnectivity(): Promise<ZCodeCodexConnectivityCheckResult>;
+  codexAccount?(params: CodexAccountCommand & { workspacePath: string; workspaceIdentity?: string }): Promise<CodexAccountState>;
 
   // ---- Task/Session 管理 ----
 

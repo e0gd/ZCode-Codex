@@ -67,6 +67,7 @@ import {
   type SettingsModelProviderTarget,
 } from "@/lib/settingsNavigation.js";
 import { useEnterpriseCodingPlanProducts } from "@/settings/model-provider-section/useEnterpriseCodingPlanProducts.js";
+import { CodexSubscriptionCard } from "@/codex-subscription/index.js";
 
 export {
   fuzzyMatch,
@@ -1090,20 +1091,33 @@ export function ModelProviderSection({
   // 这里改为始终先渲染布局壳子，再按分组展示 loading，避免用户误以为页面坏了。
   const presetLoading = loading || modelProvidersRefreshing;
   const customLoading = loading || modelProvidersRefreshing;
+  // 管理模型的服务已由 SettingsPage 注入本机/目标设置 Environment；
+  // 激活远端项目的路径不能作为本机 Codex 账号命令的 cwd。
+  const subscriptionEntry = (
+    <CodexSubscriptionCard
+      workspacePath={
+        connectivityWorkspacePath ?? (connectivityWorkspaceRequired ? "" : workspacePath)
+      }
+    />
+  );
 
   if (loadError) {
     return (
-      <div className="flex min-h-64 flex-col items-center justify-center gap-3 text-ui-base">
-        <p className="text-destructive">{loadError.message}</p>
-        <Button type="button" variant="outline" onClick={reload}>
-          {intl.formatMessage({ id: "common.retry" })}
-        </Button>
+      <div className="space-y-4">
+        {subscriptionEntry}
+        <div className="flex min-h-64 flex-col items-center justify-center gap-3 text-ui-base">
+          <p className="text-destructive">{loadError.message}</p>
+          <Button type="button" variant="outline" onClick={reload}>
+            {intl.formatMessage({ id: "common.retry" })}
+          </Button>
+        </div>
       </div>
     );
   }
 
   return (
     <ModelProviderSectionLayout
+      subscriptionEntry={subscriptionEntry}
       description={intl.formatMessage({ id: "settings.modelProviderDescription" })}
       refreshLabel={intl.formatMessage({ id: "settings.modelProvider.refresh" })}
       loadingLabel={intl.formatMessage({ id: "common.loading" })}

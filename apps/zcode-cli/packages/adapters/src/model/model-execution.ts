@@ -20,7 +20,7 @@ import {
   type ModelRequestAuth,
   type ProviderEndpointRoutingPort,
 } from "@zcode/contracts";
-import type { RegistryProviderConfig } from "@zcode/provider";
+import { isApiKeyAccess, type RegistryProviderConfig } from "@zcode/provider";
 import { withOpenRouterAttributionHeaders } from "@zcode/shared";
 import { createAnthropicCompatFetch } from "./anthropic-stream-compat.js";
 import { createModelRequestSecurityState } from "./request-security-edition/index.js";
@@ -402,8 +402,9 @@ function toAiSdkProviderConfig(
   providerId: string,
   config: RegistryProviderConfig,
 ): AiSdkProviderConfig {
+  if (config.access.type === "codex-chatgpt") throw new Error("ChatGPT subscription requires the official Codex execution engine.");
   const common = {
-    ...(config.access.type !== "zhipu-account" && config.access.apiKey
+    ...(isApiKeyAccess(config.access) && config.access.apiKey
       ? { apiKey: config.access.apiKey }
       : {}),
     baseURL: config.api.baseUrl,

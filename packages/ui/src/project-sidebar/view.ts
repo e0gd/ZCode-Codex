@@ -11,6 +11,7 @@ import type {
   ProjectAvailability,
   WindowHostTaskAddress,
   WindowHostControllerTaskActivity,
+  ProjectExecutionTarget,
 } from "@/project-sidebar/contract.js";
 import { attachTaskListRowActivity } from "@/v4/taskListRowActivity.js";
 import { compareTaskListItemsByTime, compareZCodeTaskListItems } from "@/lib/taskListOrdering.js";
@@ -20,6 +21,29 @@ import {
   areStabilizedValuesEquivalent,
   stabilizeTaskListItems,
 } from "@/v4/taskListItemStabilization.js";
+
+/** 目录是引擎的唯一事实源；同目录、同任务 ID 或另一 Host 的同名项目都不能代替真实归属。 */
+export function resolveProjectExecutionEngine(
+  tree: Pick<ProjectTree, "projects" | "tasks"> | null,
+  target: ProjectExecutionTarget,
+): "zcode" | "codex" | null {
+  if (!tree) return null;
+  let projectId = target.projectId;
+  if (target.task) {
+    const taskKey = buildTaskEntityKey(target.task);
+    const matches = tree.tasks.filter(
+      (task) => task.hostId === target.hostId && buildTaskEntityKey(task) === taskKey,
+    );
+    if (matches.length !== 1) return null;
+    projectId = matches[0]!.projectId;
+  }
+  if (projectId == null) return "zcode";
+  const projects = tree.projects.filter(
+    (project) => project.hostId === target.hostId && project.id === projectId,
+  );
+  if (projects.length !== 1 || (!target.task && projects[0]!.deleted)) return null;
+  return projects[0]!.executionEngine ?? "zcode";
+}
 
 /** 活动态只覆盖已有行的 UI sidecar；Controller 快照不能替代项目树的行集合和事实。 */
 export function applyProjectTaskActivities(

@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import {
   ModelConfigRules,
   ProviderConfigMap,
+  protectCodexSubscriptionConfigUpdate,
   type PersonalProviderConfigRepository,
   type ProviderConfigLayerSnapshot,
   type ProviderConfigLayerUpdate,
@@ -68,26 +69,40 @@ export class NodePersonalProviderConfigRepository implements PersonalProviderCon
 
   async update(
     transform: (current: ProviderConfigLayerSnapshot) => ProviderConfigLayerUpdate,
+    options?: { readonly allowCodexSubscriptionPublication?: boolean },
   ): Promise<ProviderConfigLayerSnapshot> {
     this.#assertNotDisposed();
+    let publishedChange = false;
     try {
       const snapshot = await withFileLock(this.#filePath, async () => {
         const current = await this.#readLocked();
-        const next = transform(current);
+        const proposed = transform(current);
+        // 分发/导入也直接调用 Repository，必须在同一文件锁中保护订阅身份，不能只在新 UI 拦截。
+        const next =
+          options?.allowCodexSubscriptionPublication === true
+            ? proposed
+            : protectCodexSubscriptionConfigUpdate(current, proposed);
         const update = Object.freeze({
           providers: next.providers,
           models: next.models,
           providerOrder: next.providerOrder,
           defaultModelSelection: next.defaultModelSelection,
         });
+        // 多窗口读取同一官方目录时不重复落盘/广播；幂等比较仍在同一文件锁内。
+        if (
+          options?.allowCodexSubscriptionPublication === true &&
+          snapshotFromUpdate(update).revision === current.revision
+        )
+          return current;
         const committed = await this.#writeLocked(update);
+        publishedChange = true;
         const snapshot = snapshotFromUpdate(committed);
         // 原子写可能产生多次文件系统事件。写入完成后先记录内容版本，
         // polling 随后读取到同一版本时不会再次发布失效通知。
         this.#observedRevision = snapshot.revision;
         return snapshot;
       });
-      this.#emit("updated");
+      if (publishedChange) this.#emit("updated");
       return snapshot;
     } finally {
       this.#ensurePolling();

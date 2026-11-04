@@ -1,4 +1,5 @@
 import { createMcpTransportFetch } from "@zcode/adapters";
+import { createNativeCodexAccountController } from "@zcode/adapters/native-codex";
 import { createConfig, resolvePath } from "@zcode/adapters/config";
 import type { McpElicitationPort, McpNotificationPort } from "@zcode/contracts";
 import { createNodeModelSelectionFacade } from "@zcode/provider-node";
@@ -141,6 +142,7 @@ export async function runZCodeProtocolAgent(
   let mcpResourceSink: ((samples: ZCodeMcpResourceSample[]) => void) | undefined;
   let mcpTelemetrySink: ((event: ZCodeMcpTelemetryEvent) => void) | undefined;
   let processResourceSampler: ZCodeProcessResourceSampler | undefined;
+  let codexAccountController: ReturnType<typeof createNativeCodexAccountController> | undefined;
   let providerRegistryRuntime:
     | Awaited<ReturnType<typeof startProcessProviderRegistryRuntime>>
     | undefined;
@@ -352,6 +354,27 @@ export async function runZCodeProtocolAgent(
           getProjectMemoryRoot(protocolCliStorageRoot, workspacePath, workspaceIdentity),
       }),
       syncAccountProviderConfig: activeProviderRegistryRuntime.syncAccountProviderConfig,
+      codexAccount: async (command) => {
+        // Settings 控制面进程唯一持有 pending login；仅显式访问订阅入口时发现/启动 Codex。
+        codexAccountController ??= createNativeCodexAccountController({
+          env: options.env ?? process.env,
+          onCatalog: async (models) => {
+            await activeProviderRegistryRuntime.runtime.configService.publishCodexSubscriptionCatalog(models.map(model => ({
+              modelId: model.model, displayName: model.displayName,
+              supportedReasoningEfforts: model.supportedReasoningEfforts.map(effort => effort.reasoningEffort),
+              defaultReasoningEffort: model.defaultReasoningEffort,
+              inputModalities: model.inputModalities,
+            })));
+            await activeProviderRegistryRuntime.runtime.registryService.refresh("codex-subscription-account");
+          },
+        });
+        const controller = await codexAccountController.catch((error: unknown) => {
+          // 安装 Codex 后可原位重试；不能让一次发现失败永久缓存拒绝。
+          codexAccountController = undefined;
+          throw error;
+        });
+        return controller.command(command);
+      },
       refreshProviderRegistry: async (reason) => {
         await activeProviderRegistryRuntime.runtime.registryService.refresh(reason);
       },
@@ -420,6 +443,7 @@ export async function runZCodeProtocolAgent(
     throw error;
   } finally {
     options.lifecycle?.requestShutdown();
+    await codexAccountController?.then(controller => controller.dispose(), () => {});
     await officialCommandEndpoint?.close().catch((error: unknown) => {
       logger.warn("Official command endpoint close failed", {
         error: error instanceof Error ? error.message : String(error),

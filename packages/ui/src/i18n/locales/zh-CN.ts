@@ -1,6 +1,31 @@
 import { requestSecurityMessagesZhCN } from "@/request-security-edition/messages.js";
 /** 中文翻译 */
 const zhCN: Record<string, string> = {
+  "settings.codexSubscription.title": "ChatGPT 订阅（Codex）",
+  "settings.codexSubscription.description":
+    "仅适用于 Codex 项目。在模型选择中选择 ChatGPT 订阅；同一订阅内切换模型从下一条消息生效。API 与订阅之间切换认证方式时，请新建任务。",
+  "settings.codexSubscription.status.loading": "正在读取电脑端 Codex 登录状态…",
+  "settings.codexSubscription.status.signed-out": "尚未登录",
+  "settings.codexSubscription.status.logging-in": "等待官方授权",
+  "settings.codexSubscription.status.signed-in": "已登录 ChatGPT",
+  "settings.codexSubscription.status.error": "订阅状态暂不可用",
+  "settings.codexSubscription.login": "登录 ChatGPT",
+  "settings.codexSubscription.logout": "退出登录",
+  "settings.codexSubscription.cancel": "取消登录",
+  "settings.codexSubscription.refresh": "刷新状态",
+  "settings.codexSubscription.error":
+    "无法完成订阅操作。请确认电脑端已安装可用的官方 Codex，并检查连接后刷新重试。",
+  "settings.codexSubscription.deviceInstructions":
+    "打开官方授权页面并输入以下授权码。可以在电脑或手机完成，登录状态由连接的电脑管理。",
+  "settings.codexSubscription.openAuthorization": "打开官方授权页面",
+  "settings.codexSubscription.invalidUrl": "授权地址未通过验证，请取消登录后重试。",
+  "settings.codexSubscription.models": "官方模型目录",
+  "settings.codexSubscription.reasoning": "支持的思考档位",
+  "settings.codexSubscription.catalogHint":
+    "目录由官方 Codex 提供，模型定义只读。实际访问权限和额度以账号及官方响应为准；不可用时会明确提示，不自动改用 API。",
+  "settings.codexSubscription.emptyCatalog": "尚未获取到官方模型，请刷新重试。",
+  "settings.codexSubscription.protectedDetail":
+    "请使用上方 ChatGPT 订阅卡登录、刷新和查看官方模型。认证、连接地址及官方模型定义不能通过自定义 API 编辑器修改。",
   "preview.image.copy": "复制图片",
   "preview.image.actions": "图片操作",
   "preview.image.added": "已添加到聊天",

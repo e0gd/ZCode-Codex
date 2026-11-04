@@ -8,6 +8,9 @@ import type { Provider, ProviderModel } from "@zcode/provider";
 import { compileModelOptionMap } from "@zcode/model-option-map";
 import { CodexConnection, NativeChildObserver, nativeToolName, nativeToolInput, nativeToolOutput, identifier, record, type NativeChildRelation, type RpcMessage } from "./connection.js";
 import { ASK_USER_QUESTION_TOOL_NAME, NativeAskUserQuestionInputSchema, detectImageMediaType, normalizeImageMediaType, parseImageDataUrl } from "@zcode/contracts";
+import { NativeCodexAccountController, nativeSubscriptionArguments, nativeSubscriptionEnvironment, readNativeSubscriptionCatalog, type NativeCodexAccountOptions } from "./account.js";
+export { NativeCodexAccountController } from "./account.js";
+export type { NativeCodexAccountOptions } from "./account.js";
 
 type ExecuteInput = Parameters<NativeTurnExecutor["execute"]>[0];
 export interface NativeCodexOptions {
@@ -31,7 +34,7 @@ const toolTypes = new Set(["commandExecution", "fileChange", "mcpToolCall", "dyn
 const invalidRequestCode = -32600;
 const invalidParamsCode = -32602;
 const approvalFailureCode = -32603;
-const nativeEfforts = new Set<NativeCodexReasoningEffort>(["none", "minimal", "low", "medium", "high", "xhigh"]);
+const nativeEfforts = new Set<NativeCodexReasoningEffort>(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 const nativeStreamFailureKinds = new Set(["responseStreamConnectionFailed", "responseStreamDisconnected", "responseTooManyFailedAttempts"]);
 const minimumHttpStatus = 100;
 const maximumHttpStatus = 599;
@@ -81,21 +84,24 @@ export function resolveNativeCodexModelConfig(selection: ModelSelection, provide
   if (selection.providerId !== provider.providerId || selection.modelId !== model.modelId) throw new Error("Native Codex provider/model lookup does not match the selection.");
   const api = provider.config.api;
   const access = provider.config.access;
+  const subscription = access.type === "codex-chatgpt";
+  if (subscription !== (selection.providerId === "chatgpt-subscription")) throw new Error("ChatGPT subscription authentication requires its protected provider identity.");
   if (api.type !== "openai-responses") throw new Error("Native Codex requires a configured OpenAI Responses provider.");
-  if (access.type === "zhipu-account" || !access.apiKey?.trim()) throw new Error("Native Codex requires configured API-key authentication.");
+  if (!subscription && (access.type === "zhipu-account" || !access.apiKey?.trim())) throw new Error("Native Codex requires configured API-key authentication.");
   if (api.headers && Object.keys(api.headers).length) throw new Error("Native Codex does not support this provider's custom headers.");
   const level = selection.options?.reasoningLevel;
   if (level === undefined || !model.config.optionSpecs.reasoningLevel.values.includes(level)) throw new Error("Native Codex reasoning level is not supported by the selected model.");
   // 使用 Provider 自己的选项映射；不能把 UI 档位当成 API effort，或静默丢掉其它 body 变更。
   const patch = compileModelOptionMap(model.config.optionSpecs.reasoningLevel.map, "reasoningLevel").evaluate(level);
   const keys = Object.keys(patch);
-  if (!keys.length && level === "disabled") return { modelId: model.modelId, baseUrl: api.baseUrl, apiKey: access.apiKey };
+  if (!keys.length && level === "disabled") return subscription ? { authMode: "chatgpt", modelId: model.modelId } : { modelId: model.modelId, baseUrl: api.baseUrl, apiKey: access.apiKey };
   // JsonValue 包含只读数组；先收窄为 unknown，避免 Array.isArray 无法排除 readonly 数组。
   const reasoning: unknown = patch.reasoning;
-  if (keys.length !== 1 || !reasoning || Array.isArray(reasoning) || typeof reasoning !== "object" || !("effort" in reasoning) || Object.keys(reasoning).length !== 1 || typeof reasoning.effort !== "string" || !nativeEfforts.has(reasoning.effort as NativeCodexReasoningEffort)) {
+  if (keys.length !== 1 || !reasoning || Array.isArray(reasoning) || typeof reasoning !== "object" || !("effort" in reasoning) || Object.keys(reasoning).length !== 1 || typeof reasoning.effort !== "string" || !(subscription ? /^[a-z][a-z0-9_-]{0,31}$/u.test(reasoning.effort) : nativeEfforts.has(reasoning.effort))) {
     throw new Error("Native Codex cannot represent the selected model's reasoning option mapping.");
   }
-  return { modelId: model.modelId, baseUrl: api.baseUrl, apiKey: access.apiKey, reasoningEffort: reasoning.effort as NativeCodexReasoningEffort };
+  const reasoningEffort = reasoning.effort as NativeCodexReasoningEffort;
+  return subscription ? { authMode: "chatgpt", modelId: model.modelId, reasoningEffort } : { modelId: model.modelId, baseUrl: api.baseUrl, apiKey: access.apiKey, reasoningEffort };
 }
 
 function nativePermission(permission: ExecuteInput["permission"]) {
@@ -173,9 +179,10 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
     input.signal.throwIfAborted();
     input = { ...input, permission: { ...input.permission } };
     const configOverrides = validateMcpOverrides(this.options.configOverrides ?? []);
-    const resolvedModel = input.modelSelection
+    const modelConfig = input.modelSelection
       ? await this.options.resolveModel?.(input.modelSelection)
       : undefined;
+    const resolvedModel = modelConfig ? { ...modelConfig } : undefined;
     if (input.modelSelection && !resolvedModel) throw new Error("Native Codex model selection resolver is unavailable.");
     const workspace = await realpath(this.options.workspacePath);
     if (pathKey(workspace) !== pathKey(this.options.workspacePath)) {
@@ -429,30 +436,32 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       input.signal.throwIfAborted();
       // 显式选择必须覆盖启动器默认值；每轮解析自己的 Provider，不能复用另一 Provider 的密钥。
       const model = resolvedModel?.modelId ?? this.options.model ?? "gpt-6.1-sol";
-      const provider = resolvedModel ? "zcode_api" : this.options.provider ?? "zcode_api";
-      const baseUrl = resolvedModel?.baseUrl ?? this.options.baseUrl;
+      const subscription = resolvedModel?.authMode === "chatgpt";
+      const apiModel = resolvedModel?.authMode !== "chatgpt" ? resolvedModel : undefined;
+      const provider = subscription ? "openai" : resolvedModel ? "zcode_api" : this.options.provider ?? "zcode_api";
+      const baseUrl = subscription ? undefined : apiModel?.baseUrl ?? this.options.baseUrl;
       const effort = resolvedModel?.reasoningEffort;
       if (!/^[A-Za-z0-9_-]+$/.test(provider)) throw new Error("Invalid native Codex provider identifier.");
-      if (effort !== undefined && !["none", "minimal", "low", "medium", "high", "xhigh"].includes(effort)) throw new Error("Unsupported native Codex reasoning effort.");
+      if (effort !== undefined && !(subscription ? /^[a-z][a-z0-9_-]{0,31}$/u.test(effort) : nativeEfforts.has(effort))) throw new Error("Unsupported native Codex reasoning effort.");
       if (baseUrl) {
         const url = new URL(baseUrl);
         if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error("Native Codex base URL must not contain credentials or query parameters.");
       }
-      const providerAliases = resolvedModel ? [...new Set(["zcode_api", "zcode_selected", provider])] : [provider];
+      const providerAliases = apiModel ? [...new Set(["zcode_api", "zcode_selected", provider])] : [provider];
       const connect = async (activeProvider: string) => {
       connection = new CodexConnection({
         binaryPath: this.options.binaryPath,
         // Codex 默认模式会在进程内拒绝 request_user_input；桥接实现后须显式开放该能力。
         args: ["app-server", "--stdio", "-c", "features.default_mode_request_user_input=true", "-c", "features.multi_agent=true", "-c", `model=${JSON.stringify(model)}`, "-c", `model_provider=${JSON.stringify(activeProvider)}`,
-          ...[...new Set([...providerAliases, activeProvider])].flatMap(alias => [
+          ...(subscription ? nativeSubscriptionArguments() : [...new Set([...providerAliases, activeProvider])].flatMap(alias => [
             ...(baseUrl ? ["-c", `model_providers.${alias}.base_url=${JSON.stringify(baseUrl)}`] : []),
-            ...(resolvedModel ? ["-c", `model_providers.${alias}.name="ZCode selected provider"`, "-c", `model_providers.${alias}.wire_api="responses"`, "-c", `model_providers.${alias}.requires_openai_auth=false`, "-c", `model_providers.${alias}.supports_websockets=false`] : []),
+            ...(apiModel ? ["-c", `model_providers.${alias}.name="ZCode selected provider"`, "-c", `model_providers.${alias}.wire_api="responses"`, "-c", `model_providers.${alias}.requires_openai_auth=false`, "-c", `model_providers.${alias}.supports_websockets=false`] : []),
             "-c", `model_providers.${alias}.env_key="CODEX_ZCODE_API_KEY"`,
-          ]),
+          ])),
           ...(effort !== undefined ? ["-c", `model_reasoning_effort=${JSON.stringify(effort)}`] : []),
           "-c", 'shell_environment_policy.exclude=["CODEX_ZCODE_API_KEY"]',
           "-c", `sandbox_mode=${JSON.stringify(permission.sandbox)}`, "-c", `approval_policy=${JSON.stringify(permission.approvalPolicy)}`, ...configOverrides],
-        cwd: workspace, env: { ...(this.options.env ?? process.env), CODEX_HOME: this.options.codexHome, ...(resolvedModel ? { CODEX_ZCODE_API_KEY: resolvedModel.apiKey } : {}) },
+        cwd: workspace, env: subscription ? nativeSubscriptionEnvironment(this.options.env ?? process.env, this.options.codexHome) : { ...(this.options.env ?? process.env), CODEX_HOME: this.options.codexHome, ...(apiModel ? { CODEX_ZCODE_API_KEY: apiModel.apiKey } : {}) },
         onFailure: fail,
         onMessage: message => { if (starting) buffered.push(message); else enqueue(message); },
       });
@@ -467,6 +476,20 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       return connection;
       };
       connection = await connect(provider);
+      if (subscription) {
+        const authRequired = () => Object.assign(new Error("Sign in to ChatGPT subscription in Manage Models before sending a Codex task."), { code: "NATIVE_CODEX_SUBSCRIPTION_AUTH_REQUIRED" });
+        const unavailable = () => Object.assign(new Error("This model or reasoning level is unavailable for the current ChatGPT subscription. Refresh models and select an available model."), { code: "NATIVE_CODEX_SUBSCRIPTION_MODEL_UNAVAILABLE" });
+        let account: Record<string, unknown>;
+        try { account = record(await connection.request("account/read", { refreshToken: false })); }
+        catch { if (input.signal.aborted) throw abortError(); throw authRequired(); }
+        if (record(account.account).type !== "chatgpt") throw authRequired();
+        let catalog: Awaited<ReturnType<typeof readNativeSubscriptionCatalog>>;
+        try { catalog = await readNativeSubscriptionCatalog(connection); }
+        catch { if (input.signal.aborted) throw abortError(); throw unavailable(); }
+        const selected = catalog.find(item => item.model === model);
+        if (!selected || (effort !== undefined && !selected.supportedReasoningEfforts.some(item => item.reasoningEffort === effort))) throw unavailable();
+        if (userInput.some(item => item.type === "image") && !selected.inputModalities.includes("image")) throw unavailable();
+      }
       const delegationPolicy = autoSubagents
         ? "Proactively delegate useful independent work to subagents when it improves the task. Keep simple work in the main agent. Delegation does not broaden permissions or override explicit user/project constraints."
         : "Do not spawn subagents unless the user or applicable AGENTS.md/skill instructions explicitly request subagents, delegation, or parallel agent work. Handle other work in the main agent.";
@@ -487,6 +510,8 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
         if (typeof thread.id !== "string" || thread.id !== threadId || thread.cwd !== workspace || typeof thread.modelProvider !== "string" || !/^[A-Za-z0-9_-]+$/.test(thread.modelProvider)) {
           throw new Error("Codex thread metadata does not match this session or has no valid provider identity; refusing to fork.");
         }
+        // 官方 0.166 拒绝跨 Provider 恢复；不能把旧 API thread 切成订阅或静默另建丢失历史。
+        if (subscription !== (thread.modelProvider === "openai") || (saved.authMode !== undefined && saved.authMode !== (subscription ? "chatgpt" : "apiKey"))) throw Object.assign(new Error("This task uses a different authentication source. Create a new task to switch between an API provider and ChatGPT subscription; the existing history is preserved."), { code: "NATIVE_CODEX_AUTH_SOURCE_MISMATCH" });
         // Codex 0.166 恢复时校验进程级 Provider；旧别名先重建只读元数据进程，不能重试输入或另开线程。
         if (thread.modelProvider !== provider) {
           connection.close();
@@ -498,7 +523,7 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       } else {
         const created = record(await connection.request("thread/start", settings));
         threadId = identifier(record(created.thread).id);
-        await atomicWrite(mapPath, { version: 1, workspace: pathKey(workspace), sessionId: input.sessionId, threadId });
+        await atomicWrite(mapPath, { version: 1, workspace: pathKey(workspace), sessionId: input.sessionId, threadId, authMode: subscription ? "chatgpt" : "apiKey" });
       }
       try {
         const relations = record(JSON.parse(await readFile(join(directory, "subagents.json"), "utf8")));
@@ -636,12 +661,28 @@ export interface NativeCodexProjectOptions {
   resolveModel?: NativeCodexModelResolver;
 }
 
+/** Reuses ZCode's independent managed home, never the user's separate CODEX_HOME. */
+export function resolveNativeCodexHome(env: NodeJS.ProcessEnv = process.env): string {
+  const dataBase = env.ZCODE_DATA_BASE_DIR?.trim() || env.HOME?.trim() || env.USERPROFILE?.trim() || homedir();
+  const home = env.ZCODE_CODEX_HOME ?? join(dataBase, ".zcode", "codex-home");
+  if (!isAbsolute(home)) throw new Error("ZCODE_CODEX_HOME must be an absolute independent data directory.");
+  return home;
+}
+
+/** Lazy account owner; construction discovers the binary but never logs in or executes a model. */
+export async function createNativeCodexAccountController(options: Pick<NativeCodexAccountOptions, "env" | "onCatalog"> & { binaryPath?: string; codexHome?: string }): Promise<NativeCodexAccountController> {
+  const env = options.env ?? process.env;
+  const binaryPath = await discoverNativeCodexBinary({ env, binaryPath: options.binaryPath });
+  const codexHome = options.codexHome ?? resolveNativeCodexHome(env);
+  if (!isAbsolute(codexHome)) throw new Error("Native Codex account home must be absolute.");
+  return new NativeCodexAccountController({ codexHome, binaryPath, env: { ...env }, onCatalog: options.onCatalog });
+}
+
 /** Project-authoritative selection; ordinary CODEX_HOME belongs to the user's separate Codex installation. */
 export async function createNativeCodexExecutor(options: NativeCodexProjectOptions): Promise<NativeTurnExecutor> {
   const env = options.env ?? process.env;
   const binaryPath = await discoverNativeCodexBinary({ env, binaryPath: options.binaryPath });
-  const dataBase = env.ZCODE_DATA_BASE_DIR?.trim() || env.HOME?.trim() || env.USERPROFILE?.trim() || homedir();
-  const codexHome = options.codexHome ?? env.ZCODE_CODEX_HOME ?? join(dataBase, ".zcode", "codex-home");
+  const codexHome = options.codexHome ?? resolveNativeCodexHome(env);
   if (!isAbsolute(codexHome)) throw new Error("ZCODE_CODEX_HOME must be an absolute independent data directory.");
   const workspace = await realpath(options.workspacePath);
   const assertIndependentHome = (home: string) => {

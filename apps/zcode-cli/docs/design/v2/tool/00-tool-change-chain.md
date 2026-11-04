@@ -1,5 +1,9 @@
 # Tool Change Chain Spec
 
+## Native Codex ChatGPT subscription authentication (2026-11-04)
+
+The existing native turn port admits the exact protected subscription model selection, resolves official managed authentication and validates account/model/effort before thread or turn dispatch. Tools, approvals, user-input requests and child-agent observations retain the same Codex → adapter → Core → desktop continuous/mobile replayable chain; no separate subscription model/tool loop is introduced. API↔subscription changes on an existing thread fail before input dispatch with an actionable safe error; never fork or replay. Missing login, unavailable models and authentication-source mismatch have fixed allowlisted errors. See [subscription specification](../../../../../../docs/specs/codex-chatgpt-subscription.md).
+
 ## Native Codex response stream failures (2026-11-03)
 
 Active parent thread/turn error → adapter allowlist classification → existing Core TurnError and pending tool/partial-text cleanup → existing desktop continuous/mobile replayable terminal projections. Only known structured response-stream categories and a validated HTTP status are exposed; raw provider details remain excluded. Retrying notifications keep the official execution alive. No replacement model loop, replay, provider fallback, synthetic completion or tool schema/permission change is introduced. See [response stream failure diagnostics](../native-codex-executor.md#response-stream-failure-diagnostics-2026-11-03) for regression requirements.

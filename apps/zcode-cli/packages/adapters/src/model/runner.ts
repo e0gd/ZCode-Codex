@@ -153,6 +153,10 @@ export class AiSdkModelAdapter {
   }
 
   createModel(options: CreateAiSdkModelOptions): Model {
+    // 订阅凭据只由官方 Codex 持有；不能落入普通 API SDK 的环境凭据回退。
+    if (options.providerConfig.access.type === "codex-chatgpt") {
+      throw new Error("ChatGPT subscription is available only in Codex projects.");
+    }
     const boundResolution = this.execution.bindModel({
       providerId: options.providerId,
       modelId: options.modelId,

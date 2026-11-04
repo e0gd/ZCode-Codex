@@ -918,7 +918,7 @@ describe("native turn execution", () => {
     expect(modelFactory).not.toHaveBeenCalled();
   });
 
-  it.each([undefined, "NATIVE_CODEX_UNSUPPORTED_INTERACTION", "NATIVE_CODEX_FINAL_TEXT_MISMATCH", "NATIVE_CODEX_RESPONSE_STREAM_FAILED"])("logs safe structured failure diagnostics (%s)", async code => {
+  it.each([undefined, "NATIVE_CODEX_UNSUPPORTED_INTERACTION", "NATIVE_CODEX_FINAL_TEXT_MISMATCH", "NATIVE_CODEX_RESPONSE_STREAM_FAILED", "NATIVE_CODEX_AUTH_SOURCE_MISMATCH", "NATIVE_CODEX_SUBSCRIPTION_AUTH_REQUIRED", "NATIVE_CODEX_SUBSCRIPTION_MODEL_UNAVAILABLE"])("logs safe structured failure diagnostics (%s)", async code => {
     const warn = vi.fn();
     const logger = { warn, debug: vi.fn(), info: vi.fn(), error: vi.fn(), child: vi.fn() };
     logger.child.mockReturnValue(logger);

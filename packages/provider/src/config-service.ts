@@ -1,6 +1,5 @@
 /* oxlint-disable eslint(max-lines) -- Provider/Model 的原子配置生命周期共享一次 Repository 更新边界，拆开会重复顺序与规范化逻辑。 */
 import type {
-  ModelConfigRules,
   ModelId,
   ProviderConfig,
   ProviderId,
@@ -10,7 +9,12 @@ import type {
 } from "./config/index.js";
 import {
   ApiKeyAccessConfig,
+  CodexChatGPTAccessConfig,
+  CODEX_SUBSCRIPTION_PROVIDER_ID,
+  CODEX_SUBSCRIPTION_DISPLAY_ENDPOINT,
   ModelConfig,
+  ModelConfigRules,
+  ProviderApiConfig,
   ProviderConfigMap,
   ProviderConfig as ProviderConfigValue,
   ProviderTemplateMap,
@@ -19,6 +23,62 @@ import {
 import { resolveOwnedOrder } from "./owned-order.js";
 import type { ModelSelection } from "@zcode/shared/model-selection";
 import type { ProviderConfigSnapshot, ProviderSource } from "./sources.js";
+import { z } from "zod";
+
+const SUBSCRIPTION_MAX_REASONING_LABEL_LENGTH = 32;
+const subscriptionReasoningEffortSchema = z
+  .string()
+  .max(SUBSCRIPTION_MAX_REASONING_LABEL_LENGTH)
+  .regex(/^[a-z][a-z0-9_-]*$/);
+const subscriptionCatalogModelSchema = z.object({
+  modelId: z
+    .string()
+    .min(1)
+    .max(512)
+    .refine((value) => value === value.trim() && !/\p{Cc}/u.test(value)),
+  displayName: z.string().optional(),
+  // 官方目录会扩展 max/ultra 等档位；只校验有界标识，执行时再核对当前目录中的精确成员。
+  supportedReasoningEfforts: z.array(subscriptionReasoningEffortSchema),
+  defaultReasoningEffort: subscriptionReasoningEffortSchema.optional(),
+  inputModalities: z.array(z.string()).optional(),
+});
+/** Safe official catalog facts; callers must obtain these from the local official Codex owner. */
+export interface CodexSubscriptionCatalogModel {
+  readonly modelId: string;
+  readonly displayName?: string;
+  readonly supportedReasoningEfforts: readonly string[];
+  readonly defaultReasoningEffort?: string;
+  readonly inputModalities?: readonly string[];
+}
+const SUBSCRIPTION_PROVIDER_NAME = "ChatGPT subscription (Codex)";
+const SUBSCRIPTION_UNAVAILABLE_BUDGET = 1;
+
+function assertSubscriptionWritable(providerId: string): void {
+  if (providerId === CODEX_SUBSCRIPTION_PROVIDER_ID) {
+    throw new Error(
+      "ChatGPT subscription models and authentication are managed by Codex. Use the updated client to select an official model.",
+    );
+  }
+}
+
+function assertNoSubscriptionSpoof(providers: ProviderConfigMap): void {
+  for (const [id, config] of providers.entries()) {
+    if (id !== CODEX_SUBSCRIPTION_PROVIDER_ID && config.access?.type === "codex-chatgpt") {
+      throw new Error("ChatGPT subscription authentication has a reserved provider identity.");
+    }
+  }
+}
+
+function subscriptionConfigJson(value: unknown): string {
+  // 同一条规则经磁盘解析和 setExact 创建时键顺序不同；比较事实，不能把合法启停误判为改模型定义。
+  return JSON.stringify(value, (_key, entry: unknown) =>
+    entry !== null && typeof entry === "object" && !Array.isArray(entry)
+      ? Object.fromEntries(
+          Object.entries(entry).sort(([left], [right]) => left.localeCompare(right)),
+        )
+      : entry,
+  );
+}
 
 export interface ProviderConfigLayerSnapshot {
   readonly revision: string;
@@ -40,7 +100,74 @@ export interface ProviderConfigLayerUpdate {
 export interface PersonalProviderConfigRepository extends ProviderSource<ProviderConfigLayerSnapshot> {
   update(
     transform: (current: ProviderConfigLayerSnapshot) => ProviderConfigLayerUpdate,
+    options?: { readonly allowCodexSubscriptionPublication?: boolean },
   ): Promise<ProviderConfigLayerSnapshot>;
+}
+
+/** File-lock admission for generic writes/imports. Only the account controller may replace official facts. */
+export function protectCodexSubscriptionConfigUpdate(
+  current: ProviderConfigLayerSnapshot,
+  next: ProviderConfigLayerUpdate,
+): ProviderConfigLayerUpdate {
+  assertNoSubscriptionSpoof(next.providers);
+  const id = CODEX_SUBSCRIPTION_PROVIDER_ID;
+  const existing = current.providers.getRule(id);
+  const incoming = next.providers.getRule(id);
+  const previousRules = current.models
+    .rules()
+    .filter((rule) => "providerId" in rule && rule.providerId === id);
+  const incomingRules = next.models
+    .rules()
+    .filter((rule) => "providerId" in rule && rule.providerId === id);
+  if (incoming) {
+    const withoutOrder = (rule: typeof incoming) => {
+      const { modelOrder: _order, ...config } = rule.config.toJSON();
+      return { ...rule, config };
+    };
+    if (
+      !existing ||
+      subscriptionConfigJson(withoutOrder(incoming)) !==
+        subscriptionConfigJson(withoutOrder(existing))
+    )
+      assertSubscriptionWritable(id);
+    if (
+      incoming.config.modelOrder?.some(
+        (modelId) => !existing!.config.personalModelIds?.includes(modelId),
+      )
+    )
+      assertSubscriptionWritable(id);
+  }
+  for (const rule of incomingRules) {
+    const previous = previousRules.find(
+      (candidate) =>
+        "modelId" in candidate && "modelId" in rule && candidate.modelId === rule.modelId,
+    );
+    const withoutEnabled = (value: typeof rule) => {
+      const { enabled: _enabled, ...config } = value.config.toJSON();
+      return { ...value, config };
+    };
+    if (
+      !previous ||
+      subscriptionConfigJson(withoutEnabled(rule)) !==
+        subscriptionConfigJson(withoutEnabled(previous))
+    )
+      assertSubscriptionWritable(id);
+  }
+  // 旧网页和远程分发可能没有订阅目录；缺席保留本机事实，不能借全量替换删除认证或官方模型。
+  const preservedRules = previousRules.map(
+    (previous) =>
+      incomingRules.find(
+        (rule) => "modelId" in rule && "modelId" in previous && rule.modelId === previous.modelId,
+      ) ?? previous,
+  );
+  return {
+    ...next,
+    providers: existing ? next.providers.setRule(incoming ?? existing) : next.providers,
+    models: new ModelConfigRules([
+      ...next.models.rules().filter((rule) => !("providerId" in rule) || rule.providerId !== id),
+      ...preservedRules,
+    ]),
+  };
 }
 
 export interface ProviderConfigServiceDependencies {
@@ -138,7 +265,88 @@ export class ProviderConfigService implements ProviderSource<ProviderConfigSnaps
   replacePersonalConfig(config: ProviderConfigLayerUpdate): Promise<ProviderConfigLayerSnapshot> {
     this.#assertNotDisposed();
     // 全量导入/分发与字段编辑不同；新信封未带默认选择时必须清除，不能继承接收端旧值。
-    return this.#personalRepository.update(() => config);
+    return this.#personalRepository.update((current) =>
+      protectCodexSubscriptionConfigUpdate(current, config),
+    );
+  }
+
+  /** Internal account-controller publication; never expose this method over generic Settings RPC. */
+  async publishCodexSubscriptionCatalog(
+    models: readonly CodexSubscriptionCatalogModel[],
+  ): Promise<ProviderConfigLayerSnapshot> {
+    const catalog = z.array(subscriptionCatalogModelSchema).parse(models);
+    const ids = catalog.map((model) => model.modelId);
+    if (new Set(ids).size !== ids.length)
+      throw new Error("ChatGPT subscription catalog contains duplicate model IDs.");
+    for (const model of catalog) {
+      if (
+        new Set(model.supportedReasoningEfforts).size !== model.supportedReasoningEfforts.length ||
+        (model.defaultReasoningEffort !== undefined &&
+          !model.supportedReasoningEfforts.includes(
+            model.defaultReasoningEffort as (typeof model.supportedReasoningEfforts)[number],
+          ))
+      ) {
+        throw new Error("ChatGPT subscription catalog contains invalid reasoning efforts.");
+      }
+    }
+    return this.#updatePersonal(
+      (current) => {
+        const id = CODEX_SUBSCRIPTION_PROVIDER_ID;
+        const previous = current.providers.get(id);
+        let nextModels = current.models.deleteExactForProvider(id);
+        for (const model of catalog) {
+          const efforts = model.supportedReasoningEfforts;
+          const modalities = model.inputModalities ?? ["text"];
+          // 官方目录不提供 ZCode token 预算；占位只满足 Registry 合同，native 不得据此截断上下文或输出。
+          const config = ModelConfig.fromData({
+            enabled: current.models.getExact(id, model.modelId)?.enabled ?? true,
+            properties: {
+              requiresMfjsToolSchema: false,
+              contextWindow: SUBSCRIPTION_UNAVAILABLE_BUDGET,
+              inputFormat: {
+                supportsText: modalities.includes("text"),
+                supportsImage: modalities.includes("image"),
+                supportsVideo: false,
+                supportsAudio: false,
+                supportsPdf: false,
+              },
+              outputFormat: { supportsText: true },
+              supportsToolCall: true,
+              supportsJsonSchemaOutput: false,
+              supportsNativeWebSearch: false,
+              supportsMidConversationSystem: false,
+            },
+            optionSpecs: {
+              reasoningLevel: {
+                values: efforts.length ? efforts : ["disabled"],
+                map: efforts.length ? '{"reasoning":{"effort":reasoningLevel}}' : "{}",
+              },
+              maxOutputTokens: { max: SUBSCRIPTION_UNAVAILABLE_BUDGET, map: "{}" },
+            },
+          });
+          nextModels = nextModels.setExact(id, model.modelId, config, true);
+        }
+        const providers = current.providers.setRule({
+          providerId: id,
+          providerName: SUBSCRIPTION_PROVIDER_NAME,
+          enabled: true,
+          config: new ProviderConfigValue({
+            group: "standard-personal",
+            access: new CodexChatGPTAccessConfig(),
+            api: new ProviderApiConfig({
+              type: "openai-responses",
+              baseUrl: CODEX_SUBSCRIPTION_DISPLAY_ENDPOINT,
+            }),
+            personalModelIds: ids,
+            modelOrder: normalizeModelOrder([], ids, previous?.modelOrder ?? []),
+            visibility: "visible",
+            logo: { type: "builtin", key: "openai" },
+          }),
+        });
+        return { providers, models: nextModels, providerOrder: current.providerOrder };
+      },
+      { allowCodexSubscriptionPublication: true },
+    );
   }
 
   async savePersonalProviderOverlay(
@@ -148,6 +356,9 @@ export class ProviderConfigService implements ProviderSource<ProviderConfigSnaps
     metadata?: Pick<ProviderConfigRule, "providerName" | "templateId" | "enabled">,
   ): Promise<ProviderConfigLayerSnapshot> {
     assertNonEmptyId("providerId", providerId);
+    assertSubscriptionWritable(providerId);
+    if (config.access?.type === "codex-chatgpt")
+      throw new Error("ChatGPT subscription authentication has a reserved provider identity.");
     const zcodeBuiltin = await this.#zcodeBuiltinSource.read();
     return this.#updatePersonal((current) => {
       assertMembershipCurrent(membership, providerId, current);
@@ -223,6 +434,10 @@ export class ProviderConfigService implements ProviderSource<ProviderConfigSnaps
   async createPersonalProvider(
     input: CreatePersonalProviderInput = {},
   ): Promise<PersonalProviderCreation> {
+    if (input.initialConfig?.access?.type === "codex-chatgpt")
+      throw new Error(
+        "ChatGPT subscription authentication is created by the Codex account controller.",
+      );
     const zcodeBuiltin = await this.#zcodeBuiltinSource.read();
     const templateId = input.templateId?.trim();
     const template = templateId ? zcodeBuiltin.providerTemplates?.get(templateId) : undefined;
@@ -275,11 +490,14 @@ export class ProviderConfigService implements ProviderSource<ProviderConfigSnaps
 
   deletePersonalProvider(providerId: ProviderId): Promise<ProviderConfigLayerSnapshot> {
     assertNonEmptyId("providerId", providerId);
-    return this.#updatePersonal((current) => ({
-      providers: current.providers.delete(providerId),
-      models: current.models.deleteExactForProvider(providerId),
-      providerOrder: current.providerOrder?.filter((candidate) => candidate !== providerId),
-    }));
+    return this.#updatePersonal((current) => {
+      assertSubscriptionWritable(providerId);
+      return {
+        providers: current.providers.delete(providerId),
+        models: current.models.deleteExactForProvider(providerId),
+        providerOrder: current.providerOrder?.filter((candidate) => candidate !== providerId),
+      };
+    });
   }
 
   async reorderPersonalProviders(
@@ -327,6 +545,7 @@ export class ProviderConfigService implements ProviderSource<ProviderConfigSnaps
     useRecommendedConfig?: boolean,
   ): Promise<ProviderConfigLayerSnapshot> {
     const normalizedProviderId = normalizeId("providerId", providerId);
+    assertSubscriptionWritable(normalizedProviderId);
     const normalizedModelId = normalizeId("modelId", modelId);
     const zcodeBuiltin = await this.#zcodeBuiltinSource.read();
     return this.#updatePersonal((current) => {
@@ -372,6 +591,7 @@ export class ProviderConfigService implements ProviderSource<ProviderConfigSnaps
     membership?: ProviderModelMembership,
   ): Promise<ProviderConfigLayerSnapshot> {
     const normalizedProviderId = normalizeId("providerId", providerId);
+    assertSubscriptionWritable(normalizedProviderId);
     const currentId = normalizeId("modelId", currentModelId);
     const nextId = normalizeId("modelId", nextModelId);
     if (currentId === nextId) return this.#personalRepository.read();
@@ -456,6 +676,7 @@ export class ProviderConfigService implements ProviderSource<ProviderConfigSnaps
     membership?: ProviderModelMembership,
   ): Promise<ProviderConfigLayerSnapshot> {
     const normalizedProviderId = normalizeId("providerId", providerId);
+    assertSubscriptionWritable(normalizedProviderId);
     const originalId = normalizeId("modelId", originalModelId);
     const nextId = normalizeId("modelId", nextModelId);
     const zcodeBuiltin = await this.#zcodeBuiltinSource.read();
@@ -524,6 +745,7 @@ export class ProviderConfigService implements ProviderSource<ProviderConfigSnaps
     membership?: ProviderModelMembership,
   ): Promise<ProviderConfigLayerSnapshot> {
     const normalizedProviderId = normalizeId("providerId", providerId);
+    assertSubscriptionWritable(normalizedProviderId);
     const normalizedModelId = normalizeId("modelId", modelId);
     const builtin = await this.#zcodeBuiltinSource.read();
     return this.#updatePersonal((current) => {
@@ -567,13 +789,17 @@ export class ProviderConfigService implements ProviderSource<ProviderConfigSnaps
 
   #updatePersonal(
     transform: (current: ProviderConfigLayerSnapshot) => ProviderConfigLayerUpdate,
+    options?: { readonly allowCodexSubscriptionPublication?: boolean },
   ): Promise<ProviderConfigLayerSnapshot> {
     this.#assertNotDisposed();
-    return this.#personalRepository.update((current) => ({
-      // Provider/Model/排序只修改自己的成员，不能因共用文件清掉默认选择。
-      defaultModelSelection: current.defaultModelSelection,
-      ...transform(current),
-    }));
+    return this.#personalRepository.update(
+      (current) => ({
+        // Provider/Model/排序只修改自己的成员，不能因共用文件清掉默认选择。
+        defaultModelSelection: current.defaultModelSelection,
+        ...transform(current),
+      }),
+      options,
+    );
   }
 
   #emit(reason: string): void {
@@ -690,7 +916,7 @@ function nextPersonalProviderId(
   templateId?: ProviderTemplateId,
 ): ProviderId {
   const base = templateId ? normalizeProviderIdSeed(templateId) : "new-provider";
-  if (!occupied.has(base)) return base;
+  if (!occupied.has(base) && base !== CODEX_SUBSCRIPTION_PROVIDER_ID) return base;
   for (let suffix = 2; ; suffix += 1) {
     const candidate = `${base}-${suffix}`;
     if (!occupied.has(candidate)) return candidate;

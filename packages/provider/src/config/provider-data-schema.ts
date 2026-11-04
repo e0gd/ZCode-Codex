@@ -40,6 +40,9 @@ export const completeApiKeyAccessDataSchema = apiKeyAccessDataSchema.extend({
   apiKey: nonBlankRequiredString,
 });
 
+/** Official Codex owns credentials; this identity never contains OAuth tokens or an API key. */
+export const codexChatGPTAccessDataSchema = z.object({ type: z.literal("codex-chatgpt") }).strict();
+
 export const completeZhipuAccountAccessDataSchema = z
   .object({
     type: z.literal("zhipu-account"),
@@ -57,10 +60,12 @@ export const zhipuAccountAccessDataSchema = z
 export const providerAccessDataSchema = z.discriminatedUnion("type", [
   apiKeyAccessDataSchema,
   zhipuAccountAccessDataSchema,
+  codexChatGPTAccessDataSchema,
 ]);
 export const completeProviderAccessDataSchema = z.discriminatedUnion("type", [
   completeApiKeyAccessDataSchema,
   completeZhipuAccountAccessDataSchema,
+  codexChatGPTAccessDataSchema,
 ]);
 
 export const completeProviderApiDataSchema = z

@@ -38,6 +38,7 @@ import {
 import { resolveAppFollowupMode } from "@/v4/composer/followupModeSettings.js";
 import { logger } from "@/logger.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
+import { filterModelSelectionForExecutionEngine } from "@/lib/modelSelectionGroups.js";
 
 /** 目录水合单飞（per workspaceKey）：draft、已有 session 和严格模式双挂载共享一次 RPC。 */
 const workspaceCatalogHydrationFlights = new Map<string, Promise<void>>();
@@ -162,6 +163,7 @@ export function useDraftConfigControl(params: {
   /** provider registry 已通过 renderer readiness 门禁后才允许拉起 Agent。 */
   agentStartupAllowed?: boolean;
   modelSelectionService: IModelSelectionService | null;
+  executionEngine?: "zcode" | "codex" | null;
 }): DraftConfigControl {
   const {
     workspacePath,
@@ -171,6 +173,7 @@ export function useDraftConfigControl(params: {
     sessionConfig,
     agentStartupAllowed = true,
     modelSelectionService,
+    executionEngine,
   } = params;
   const workspaceKey = workspaceIdentity?.trim() || workspacePath;
   const displayProvider = provider ?? ZCODE_AGENT_PROVIDER;
@@ -237,7 +240,7 @@ export function useDraftConfigControl(params: {
           }
         : loadedScope;
   let draft = currentState.draft;
-  const modelSelectionRead = useModelSelectionServiceView(
+  const rawModelSelectionRead = useModelSelectionServiceView(
     modelSelectionService,
     true,
     "remote-waiting",
@@ -245,6 +248,34 @@ export function useDraftConfigControl(params: {
       selection: draft.modelSelection ?? null,
     },
   );
+  const filteredRefresh = useCallback(async () => {
+    const result = await rawModelSelectionRead.refresh();
+    return result.kind === "ready"
+      ? { ...result, view: filterModelSelectionForExecutionEngine(result.view, executionEngine) }
+      : result;
+  }, [rawModelSelectionRead.refresh, executionEngine]);
+  const modelSelectionRead: ModelSelectionRead = {
+    ...rawModelSelectionRead,
+    refresh: filteredRefresh,
+    state:
+      rawModelSelectionRead.state.status === "ready"
+        ? {
+            ...rawModelSelectionRead.state,
+            view: filterModelSelectionForExecutionEngine(
+              rawModelSelectionRead.state.view,
+              executionEngine,
+            ),
+          }
+        : rawModelSelectionRead.state.status === "loading" && rawModelSelectionRead.state.catalog
+          ? {
+              ...rawModelSelectionRead.state,
+              catalog: filterModelSelectionForExecutionEngine(
+                rawModelSelectionRead.state.catalog,
+                executionEngine,
+              ),
+            }
+          : rawModelSelectionRead.state,
+  };
   const modelSelectionView =
     modelSelectionRead.state.status === "ready" ? modelSelectionRead.state.view : null;
   if (currentState.initialization === "new-task" && !draft.mode && modelSelectionView) {

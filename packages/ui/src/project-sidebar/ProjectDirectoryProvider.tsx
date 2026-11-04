@@ -7,6 +7,8 @@ import { useProjectSidebarPreferences } from "@/project-sidebar/useProjectSideba
 import { useZCodeStoreWithDefault } from "@/store/StoreProvider.js";
 import { useTaskGroups } from "@/project-sidebar/useTaskGroups.js";
 import { selectSortedProjects } from "@/project-sidebar/view.js";
+import { resolveProjectExecutionEngine } from "@/project-sidebar/view.js";
+import type { ProjectExecutionTarget, ProjectTree } from "@/project-sidebar/contract.js";
 
 function useDirectoryState(isDesktop: boolean) {
   const result = useProjectTree(isDesktop);
@@ -34,6 +36,7 @@ function useDirectoryState(isDesktop: boolean) {
 }
 type DirectoryState = ReturnType<typeof useDirectoryState>;
 const Context = createContext<DirectoryState | null>(null);
+const ExecutionFactsContext = createContext<ProjectTree | null>(null);
 type DirectoryActions = {
   commitCreatedTask: DirectoryState["commitCreatedTask"];
   refreshTaskGroups: DirectoryState["groups"]["refresh"];
@@ -124,7 +127,9 @@ function DirectoryOwner({ children, isDesktop }: { children: ReactNode; isDeskto
     <Context.Provider value={directory}>
       <ActionsContext.Provider value={actions}>
         <ProjectSelectionContext.Provider value={projectSelection}>
-          {children}
+          <ExecutionFactsContext.Provider value={directory.factTree}>
+            {children}
+          </ExecutionFactsContext.Provider>
         </ProjectSelectionContext.Provider>
       </ActionsContext.Provider>
     </Context.Provider>
@@ -144,6 +149,15 @@ export function useOptionalProjectDirectory() {
 /** 只发送目录命令，不订阅任务活动。嵌入 pane 允许没有目录 owner。 */
 export function useOptionalProjectDirectoryActions() {
   return useContext(ActionsContext);
+}
+/** 只读既有目录事实，不订阅任务 activity，不另发项目查询或保存引擎状态。 */
+export function useProjectExecutionEngine(target: ProjectExecutionTarget) {
+  const facts = useContext(ExecutionFactsContext);
+  const { hostId, projectId, task } = target;
+  return useMemo(
+    () => resolveProjectExecutionEngine(facts, { hostId, projectId, ...(task ? { task } : {}) }),
+    [facts, hostId, projectId, task?.taskId, task?.workspacePath, task?.workspaceIdentity],
+  );
 }
 /** 工作区选择器只读取项目与设备信息，任务状态不属于它的展示输入。 */
 export function useProjectSelectionDirectory() {

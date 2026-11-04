@@ -67,6 +67,80 @@ function input(overrides: Partial<Parameters<NativeCodexExecutor["execute"]>[0]>
 }
 const activeParams = { threadId: "thread-1", turnId: "turn-1" };
 
+describe("native ChatGPT subscription execution", () => {
+  const model = { id: "subscription-model", model: "gpt-subscription", displayName: "Subscription", supportedReasoningEfforts: [{ reasoningEffort: "high", description: "High" }], defaultReasoningEffort: "high", inputModalities: ["text", "image"] };
+  const selection = { providerId: "chatgpt-subscription", modelId: model.model, options: { reasoningLevel: "high" } };
+  const resolved = { authMode: "chatgpt" as const, modelId: model.model, reasoningEffort: "high" as const };
+  const accountServer = (signedIn = true, catalog: unknown[] = [model]) => server((message, emit) => {
+    if (message.method === "account/read") { emit({ id: message.id, result: { account: signedIn ? { type: "chatgpt", email: "test@example.test", planType: "plus" } : null } }); return true; }
+    if (message.method === "model/list") { emit({ id: message.id, result: { data: catalog, nextCursor: null } }); return true; }
+    return false;
+  });
+
+  it("uses managed official auth without inherited API credentials or endpoint overrides", async () => {
+    const rpc = accountServer(); const { options } = await fixture();
+    const executor = new NativeCodexExecutor({ ...options, baseUrl: "https://stale-api.example.test", env: { OPENAI_API_KEY: "old-key", CODEX_ZCODE_API_KEY: "old-provider", OpenAI_Base_URL: "https://old.example.test" }, resolveModel: async () => resolved });
+    await executor.execute(input({ modelSelection: selection }));
+    const [binary, args, spawnOptions] = mock.spawn.mock.calls[0]!;
+    expect(binary).toBe(options.binaryPath);
+    expect(args).toContain('model_provider="openai"');
+    expect(args).toContain('forced_login_method="chatgpt"');
+    expect(args.join(" ")).not.toMatch(/stale-api|old\.example|env_key|requires_openai_auth=false/);
+    expect(spawnOptions.env).not.toHaveProperty("OPENAI_API_KEY"); expect(spawnOptions.env).not.toHaveProperty("CODEX_ZCODE_API_KEY"); expect(spawnOptions.env).not.toHaveProperty("OpenAI_Base_URL");
+    expect(rpc.calls.findIndex(call => call.method === "model/list")).toBeLessThan(rpc.calls.findIndex(call => call.method === "thread/start"));
+    expect(rpc.calls.find(call => call.method === "thread/start")?.params).toMatchObject({ modelProvider: "openai", model: model.model });
+    expect(rpc.calls.find(call => call.method === "turn/start")?.params).toMatchObject({ model: model.model, effort: "high" });
+  });
+
+  it("rejects signed-out and unavailable subscription models before thread creation or turn dispatch", async () => {
+    let rpc = accountServer(false); let current = await fixture();
+    let executor = new NativeCodexExecutor({ ...current.options, resolveModel: async () => resolved });
+    await expect(executor.execute(input({ modelSelection: selection }))).rejects.toThrow("Sign in to ChatGPT subscription");
+    expect(rpc.calls.some(call => call.method === "thread/start" || call.method === "turn/start")).toBe(false);
+    mock.spawn.mockReset(); rpc = accountServer(true, []); current = await fixture();
+    executor = new NativeCodexExecutor({ ...current.options, resolveModel: async () => resolved });
+    await expect(executor.execute(input({ modelSelection: selection }))).rejects.toThrow("unavailable for the current ChatGPT subscription");
+    expect(rpc.calls.some(call => call.method === "thread/start" || call.method === "turn/start")).toBe(false);
+  });
+
+  it("revalidates supported efforts and image capabilities before dispatch", async () => {
+    const rpc = accountServer(true, [{ ...model, supportedReasoningEfforts: [{ reasoningEffort: "low", description: "Low" }], defaultReasoningEffort: "low" }]);
+    const { options } = await fixture(); const executor = new NativeCodexExecutor({ ...options, resolveModel: async () => resolved });
+    await expect(executor.execute(input({ modelSelection: selection }))).rejects.toThrow("unavailable for the current ChatGPT subscription");
+    expect(rpc.calls.some(call => call.method === "turn/start")).toBe(false);
+  });
+  it.each(["max", "ultra", "future-effort"])("preserves the official catalog's %s reasoning effort", async effort => {
+    const rpc = accountServer(true, [{ ...model, supportedReasoningEfforts: [{ reasoningEffort: effort, description: "Official effort" }], defaultReasoningEffort: effort }]);
+    const { options } = await fixture(); const executor = new NativeCodexExecutor({ ...options, resolveModel: async () => ({ ...resolved, reasoningEffort: effort }) });
+    await executor.execute(input({ modelSelection: { ...selection, options: { reasoningLevel: effort } } }));
+    expect(rpc.calls.find(call => call.method === "turn/start")?.params).toMatchObject({ effort });
+  });
+
+  it("resumes the same subscription thread when changing only model", async () => {
+    const second = { ...model, id: "second", model: "gpt-subscription-second" };
+    const rpc = accountServer(true, [model, second]); const { options } = await fixture();
+    const executor = new NativeCodexExecutor({ ...options, resolveModel: async selected => ({ ...resolved, modelId: selected.modelId }) });
+    await executor.execute(input({ modelSelection: selection }));
+    await executor.execute(input({ inputId: "second", modelSelection: { ...selection, modelId: second.model } }));
+    expect(rpc.calls.filter(call => call.method === "thread/start")).toHaveLength(1);
+    expect(rpc.calls.find(call => call.method === "thread/resume")?.params).toMatchObject({ threadId: "thread-1", modelProvider: "openai", model: second.model });
+    expect(rpc.calls.filter(call => call.method === "turn/start").at(-1)?.params).toMatchObject({ model: second.model });
+  });
+
+  it.each(["api-to-subscription", "subscription-to-api"])("preserves thread/history and rejects %s before dispatch", async direction => {
+    const rpc = accountServer(); const { options } = await fixture();
+    const subscriptionExecutor = new NativeCodexExecutor({ ...options, resolveModel: async () => resolved });
+    const apiExecutor = new NativeCodexExecutor(options);
+    const first = direction === "api-to-subscription" ? apiExecutor : subscriptionExecutor;
+    const second = direction === "api-to-subscription" ? subscriptionExecutor : apiExecutor;
+    await first.execute(input(direction === "subscription-to-api" ? { modelSelection: selection } : {}));
+    await expect(second.execute(input({ inputId: "switch", ...(direction === "api-to-subscription" ? { modelSelection: selection } : {}) }))).rejects.toThrow("Create a new task to switch");
+    expect(rpc.calls.filter(call => call.method === "thread/start")).toHaveLength(1);
+    expect(rpc.calls.filter(call => call.method === "turn/start")).toHaveLength(1);
+    expect(rpc.calls.filter(call => call.method === "thread/resume")).toHaveLength(0);
+  });
+});
+
 describe("native child observation", () => {
   it("preserves parallel/nested identities, reuses a child, and rejects retired child turns", async () => {
     const emit = vi.fn(async () => {}); const observer = new NativeChildObserver(emit, "session");

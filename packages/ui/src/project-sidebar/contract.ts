@@ -15,6 +15,12 @@ export interface ProjectDevice {
   status: string;
   sourceServerId?: string;
 }
+/** Existing task membership wins over draft project intent; no cwd-based project inference. */
+export interface ProjectExecutionTarget {
+  hostId: string;
+  projectId?: string | null;
+  task?: { taskId: string; workspacePath: string; workspaceIdentity?: string };
+}
 
 export interface ProjectRowAction {
   id: string;

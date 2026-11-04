@@ -8,6 +8,7 @@ import {
   ProviderConfig,
   ProviderRegistry,
   ZhipuAccountAccessConfig,
+  CodexChatGPTAccessConfig,
   type Provider,
 } from "@zcode/provider";
 import { describe, expect, it, vi } from "vitest";
@@ -104,6 +105,15 @@ function captureRuntime(registry: ProviderRegistry) {
 }
 
 describe("ApiProviderModelRuntime", () => {
+  it("rejects a subscription selection in the ZCode API engine without constructing an SDK model", () => {
+    const subscription = provider("chatgpt-subscription", new ProviderConfig({
+      group: "standard-personal", access: new CodexChatGPTAccessConfig(),
+      api: new ProviderApiConfig({ type: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex" }),
+    }));
+    const { runtime, created } = captureRuntime(new ProviderRegistry([subscription]));
+    expect(() => runtime.modelFactory({ selection: selection("chatgpt-subscription") })).toThrow("only in Codex projects");
+    expect(created).toEqual([]);
+  });
   it("resolves native provider credentials and mapped effort from the current registry without creating a Model", () => {
     const nativeProvider = (id: string, key: string): Provider => ({
       ...provider(id, createApiKeyProviderConfig({ apiFormat: "openai-responses", apiKey: key, baseURL: `https://${id}.example.test/v1`, models: ["model-a"] })),
