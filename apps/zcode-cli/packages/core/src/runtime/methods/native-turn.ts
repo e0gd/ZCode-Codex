@@ -43,7 +43,7 @@ export async function executeNativeTurn(
     userMessageId: MessageId;
     events: SessionEvent[];
   },
-): Promise<{ text: string; threadId: string; toolCallCount: number }> {
+): Promise<{ text: string; threadId: string; turnId?: string; toolCallCount: number }> {
   const executor = this.nativeTurnExecutor;
   if (!executor) throw new Error("Native turn executor is unavailable");
   // 原生执行必须使用本轮权限快照；此前硬编码审批让 Full access 仍弹出确认。

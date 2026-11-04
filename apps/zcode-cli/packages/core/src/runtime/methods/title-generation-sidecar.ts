@@ -22,6 +22,7 @@ import { getOffPeakExecution } from "../off-peak/runtime.js";
 
 export interface TitleModelContext {
   selection: ModelSelection | undefined;
+  nativeSource?: { threadId: string; turnId: string };
   requestDependencies?: ModelRequestDependencies;
   release(): void;
 }
@@ -127,6 +128,10 @@ async function generateTitleCandidateImpl(
   const context = options.modelContext ?? retainTitleModelContext(this);
   const requestedModelSelection = context.selection;
   if (!requestedModelSelection) return null;
+  // 原生订阅不能构造 API Model；标题通过同一原生线程采样，绝不切换认证来源。
+  if (this.nativeTurnExecutor) {
+    return generateNativeTitleCandidate.call(this, input, options, context);
+  }
   const baseModel = createRuntimeModel(this, {
     selection: requestedModelSelection,
     requestDependencies: context.requestDependencies,
@@ -246,6 +251,41 @@ async function generateTitleCandidateImpl(
   }
 
   return { modelSelection, title, traceContext: modelTraceContext };
+}
+
+async function generateNativeTitleCandidate(
+  this: AgentRuntimeInternal,
+  input: string,
+  options: { querySource: string; traceContext: TraceContext; messageID?: MessageId },
+  context: TitleModelContext,
+): Promise<{ modelSelection: ModelSelection; title: string; traceContext: TraceContext } | null> {
+  const executor = this.nativeTurnExecutor;
+  const source = context.nativeSource;
+  const selection = context.selection;
+  if (!executor?.generateTitle || !source || !selection) return null;
+  const traceContext = createChildTraceContext(options.traceContext, {
+    attributes: { model: `${selection.providerId}/${selection.modelId}`, querySource: options.querySource,
+      ...(options.messageID ? { titleMessageId: options.messageID } : {}) },
+  });
+  const signal = AbortSignal.any([this.shutdownSignal,
+    AbortSignal.timeout(positiveTimeoutMs(this.config.titleGeneration?.timeoutMs))]);
+  signal.throwIfAborted();
+  const messages = buildTitleMessages(input);
+  await this.appendEvent(this.createEvent(SessionEventType.ModelRequest, {
+    messages, providerId: selection.providerId, modelId: selection.modelId,
+    querySource: options.querySource, toolCount: 0,
+  }, traceContext), traceContext);
+  const result = await executor.generateTitle({ sessionId: this.sessionId, ...source,
+    modelSelection: selection, signal, traceContext,
+    prompt: `${SESSION_TITLE_SYSTEM_PROMPT}\n\nSummarize only this first user input, not later responses or task outcomes:\n${normalizeTitleInput(input)}`,
+  });
+  signal.throwIfAborted();
+  await this.appendEvent(this.createEvent(SessionEventType.ModelComplete, {
+    content: result.text ?? "", querySource: options.querySource, stopReason: "stop", toolCallCount: 0,
+  }, traceContext), traceContext);
+  // 官方 sample 对工具尝试或空输出返回 null；不执行工具、不捏造标题或 token 用量。
+  const title = result.text === null ? null : cleanGeneratedTitle(result.text);
+  return title ? { modelSelection: selection, title, traceContext } : null;
 }
 
 export function normalizeTitleInput(input: string): string {

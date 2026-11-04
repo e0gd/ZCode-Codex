@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NativeTurnApproval, NativeTurnEvent } from "@zcode/contracts";
+import { createRootTraceContext } from "@zcode/contracts";
 
 const mock = vi.hoisted(() => ({ spawn: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawn: mock.spawn }));
@@ -66,6 +67,90 @@ function input(overrides: Partial<Parameters<NativeCodexExecutor["execute"]>[0]>
     requestUserInput: vi.fn(async () => ({} as Record<string, string>)), ...overrides };
 }
 const activeParams = { threadId: "thread-1", turnId: "turn-1" };
+
+describe("native title sampling", () => {
+  const titleInput = () => ({ sessionId: "session-1", ...activeParams, prompt: "Return only a concise JSON title", traceContext: createRootTraceContext(), signal: new AbortController().signal });
+
+  it.each(["api", "subscription"])("samples the exact completed %s source without starting another turn", async auth => {
+    const selection = { providerId: auth === "api" ? "provider-a" : "chatgpt-subscription", modelId: "gpt-title", options: { reasoningLevel: "high" } };
+    const rpc = server((message, emit) => {
+      if (message.method === "account/read") { emit({ id: message.id, result: { account: { type: "chatgpt" } } }); return true; }
+      if (message.method === "model/list") { emit({ id: message.id, result: { data: [{ id: "gpt-title", model: "gpt-title", displayName: "Title", supportedReasoningEfforts: [{ reasoningEffort: "high", description: "High" }, { reasoningEffort: "low", description: "Low" }], defaultReasoningEffort: "high", inputModalities: ["text"] }], nextCursor: null } }); return true; }
+      if (message.method === "thread/sample") { emit({ id: message.id, result: { sourceTurnId: "turn-1", responseId: "response-title", text: '{"title":"Concise title"}' } }); return true; }
+      return false;
+    });
+    const { options } = await fixture();
+    const executor = new NativeCodexExecutor({ ...options, resolveModel: async () => auth === "api" ? { modelId: "gpt-title", apiKey: "selected-key", baseUrl: "https://selected.example.test/v1", reasoningEffort: "high" } : { authMode: "chatgpt", modelId: "gpt-title", reasoningEffort: "high" } });
+    const result = await executor.execute(input({ modelSelection: selection }));
+    expect(result.turnId).toBe("turn-1");
+    expect(await executor.generateTitle({ ...titleInput(), modelSelection: selection })).toEqual({ text: '{"title":"Concise title"}' });
+    expect(rpc.calls.filter(call => call.method === "thread/start")).toHaveLength(1);
+    expect(rpc.calls.filter(call => call.method === "turn/start")).toHaveLength(1);
+    expect(rpc.calls.find(call => call.method === "thread/sample")?.params).toEqual({ threadId: "thread-1", expectedTurnId: "turn-1", prompt: titleInput().prompt, disableMcp: true, ...(auth === "subscription" ? { effort: "low" } : {}) });
+    expect(rpc.children).toHaveLength(2);
+    expect(rpc.children.every(child => child.kill.mock.calls.length === 1)).toBe(true);
+    const sampleSpawn = mock.spawn.mock.calls[1]!;
+    if (auth === "subscription") { expect(sampleSpawn[2].env).not.toHaveProperty("CODEX_ZCODE_API_KEY"); expect(sampleSpawn[1]).toContain('forced_login_method="chatgpt"'); }
+    else expect(sampleSpawn[2].env.CODEX_ZCODE_API_KEY).toBe("selected-key");
+  });
+
+  it.each(["stale", "null", "rpc-error", "abort"])("keeps %s sampling isolated from the main turn", async outcome => {
+    let controller: AbortController;
+    const rpc = server((message, emit) => {
+      if (message.method !== "thread/sample") return false;
+      if (outcome === "abort") controller.abort();
+      else if (outcome === "rpc-error") emit({ id: message.id, error: { code: -32602, message: "private diagnostic" } });
+      else emit({ id: message.id, result: { sourceTurnId: outcome === "stale" ? "other-turn" : "turn-1", text: outcome === "null" ? null : "title" } });
+      return true;
+    });
+    const { executor } = await fixture(); await executor.execute(input());
+    controller = new AbortController();
+    const sampled = executor.generateTitle({ ...titleInput(), signal: controller.signal });
+    if (outcome === "null") expect(await sampled).toEqual({ text: null });
+    else await expect(sampled).rejects.toThrow();
+    expect(rpc.calls.filter(call => call.method === "turn/start")).toHaveLength(1);
+    expect(rpc.calls.filter(call => call.method === "thread/sample")).toHaveLength(1);
+    expect(rpc.children.at(-1)?.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an unbound thread before connecting or sampling", async () => {
+    const rpc = server(); const { executor } = await fixture(); await executor.execute(input());
+    await expect(executor.generateTitle({ ...titleInput(), threadId: "other-thread" })).rejects.toThrow("mapping");
+    expect(rpc.children).toHaveLength(1);
+    expect(rpc.calls.some(call => call.method === "thread/sample")).toBe(false);
+  });
+
+  it("gives a new foreground turn priority over its pending title and releases the shared lock", async () => {
+    const sampling = Promise.withResolvers<void>();
+    const rpc = server(message => { if (message.method === "thread/sample") { sampling.resolve(); return true; } return false; });
+    const { executor } = await fixture(); await executor.execute(input());
+    const title = executor.generateTitle(titleInput());
+    const rejected = expect(title).rejects.toThrow();
+    await sampling.promise;
+    await expect(executor.generateTitle(titleInput())).rejects.toThrow("already");
+    await expect(executor.execute(input({ inputId: "foreground-next" }))).resolves.toMatchObject({ turnId: "turn-1" });
+    await rejected;
+    expect(rpc.calls.filter(call => call.method === "thread/sample")).toHaveLength(1);
+    expect(rpc.calls.filter(call => call.method === "turn/start")).toHaveLength(2);
+    expect(rpc.children.every(child => child.kill.mock.calls.length === 1)).toBe(true);
+  });
+
+  it("cannot resume a title source locked by another executor", async () => {
+    const foreground = Promise.withResolvers<void>(); let hold = false;
+    const rpc = server((message, emit) => { if (hold && message.method === "turn/start") { emit({ id: message.id, result: { turn: { id: "active-turn" } } }); foreground.resolve(); return true; } return false; });
+    const { executor, options } = await fixture(); await executor.execute(input());
+    hold = true;
+    const controller = new AbortController();
+    const active = executor.execute(input({ inputId: "other-active", signal: controller.signal }));
+    const rejected = expect(active).rejects.toThrow();
+    await foreground.promise;
+    const connections = rpc.children.length;
+    await expect(new NativeCodexExecutor(options).generateTitle(titleInput())).rejects.toThrow("active");
+    expect(rpc.children).toHaveLength(connections);
+    expect(rpc.calls.some(call => call.method === "thread/sample")).toBe(false);
+    controller.abort(); await rejected;
+  });
+});
 
 describe("native ChatGPT subscription execution", () => {
   const model = { id: "subscription-model", model: "gpt-subscription", displayName: "Subscription", supportedReasoningEfforts: [{ reasoningEffort: "high", description: "High" }], defaultReasoningEffort: "high", inputModalities: ["text", "image"] };
@@ -723,7 +808,7 @@ describe("native Codex transport", () => {
       return true;
     });
     const { executor } = await fixture(); const request = input();
-    expect(await executor.execute(request)).toEqual({ text: "", threadId: "thread-1", toolCallCount: 0 });
+    expect(await executor.execute(request)).toEqual({ text: "", threadId: "thread-1", turnId: "turn-1", toolCallCount: 0 });
     expect(vi.mocked(request.onEvent).mock.calls.map(([event]) => event)).toEqual([
       ...["contextCompactionStarted", "contextCompactionStarted", "contextCompactionCompleted", "contextCompactionCompleted", "contextCompactionStarted"].map(type => ({ type, ...activeParams, itemId: "compact-1" })),
       { type: "contextCompactionCompleted", ...activeParams, itemId: "completed-only" },
@@ -770,7 +855,7 @@ describe("native Codex transport", () => {
     });
     const { executor } = await fixture();
     const request = input();
-    expect(await executor.execute(request)).toEqual({ text: "beforeafter", threadId: "thread-1", toolCallCount: 2 });
+    expect(await executor.execute(request)).toEqual({ text: "beforeafter", threadId: "thread-1", turnId: "turn-1", toolCallCount: 2 });
     const itemId = sameItem ? "before" : "after";
     const events = vi.mocked(request.onEvent).mock.calls.map(([event]) => event);
     expect(events.map(event => event.type)).toEqual(["textStarted", "textDelta", ...(!sameItem ? ["textCompleted"] : []), "toolStarted", "toolCompleted", "toolStarted", "toolCompleted", ...(!sameItem ? ["textStarted"] : []), "textDelta", "textCompleted"]);
@@ -898,7 +983,7 @@ describe("native Codex transport", () => {
     const remote = server(); const { executor, options } = await fixture();
     let active = 0; let max = 0; const events: NativeTurnEvent[] = [];
     const first = input({ onEvent: async event => { active++; max = Math.max(max, active); await new Promise(resolve => setTimeout(resolve, 5)); events.push(event); active--; } });
-    expect(await executor.execute(first)).toEqual({ text: "你好", threadId: "thread-1", toolCallCount: 0 });
+    expect(await executor.execute(first)).toEqual({ text: "你好", threadId: "thread-1", turnId: "turn-1", toolCallCount: 0 });
     expect(max).toBe(1); expect(events).toEqual([{ type: "textStarted", itemId: "msg" }, { type: "textDelta", itemId: "msg", delta: "你" }, { type: "textDelta", itemId: "msg", delta: "好" }, { type: "textCompleted", itemId: "msg" }]);
     await new NativeCodexExecutor(options).execute(input({ inputId: "input-2" }));
     expect(remote.calls.filter(m => m.method === "thread/start")).toHaveLength(1);
@@ -954,7 +1039,7 @@ describe("native Codex transport", () => {
       return false;
     });
     const { executor } = await fixture(); const request = input();
-    expect(await executor.execute(request)).toEqual({ text: "", threadId: "thread-1", toolCallCount: 1 });
+    expect(await executor.execute(request)).toEqual({ text: "", threadId: "thread-1", turnId: "turn-1", toolCallCount: 1 });
     expect(request.requestApproval).toHaveBeenCalledWith(expect.objectContaining({ id: "900", toolCallId: "cmd", name: "Bash", input: expect.objectContaining({ command: "pwd" }), reason: "permission" }));
     expect(remote.calls.find(m => m.id === 900)?.result).toEqual({ decision: "decline" });
     expect(vi.mocked(request.onEvent).mock.calls.map(([event]) => event.type)).toEqual(["toolStarted", "toolCompleted"]);

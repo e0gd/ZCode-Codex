@@ -61,6 +61,7 @@ import { appendInterruptMarker } from "./interrupt-marker.js";
 import {
   maybeStartDeferredSessionTitleGeneration,
   maybeStartSessionTitleGeneration,
+  maybeStartNativeSessionTitleGeneration,
 } from "./session-title.js";
 import type { RegularTurnLoopState } from "./turn-loop-state.js";
 import { finishOutputTokenRecovery } from "./turn-output-token-continuation.js";
@@ -779,6 +780,11 @@ export async function executeTurnCommand(
           }, turnTraceContext);
           await this.appendEvent(completeEvent, turnTraceContext);
           events.push(completeEvent);
+          // 原生分支提前返回曾跳过标题；仅对首条真实输入在完成后启动无工具采样。
+          if (options?.skipInputRecord !== true && options?.inputVisibility !== "model-only") {
+            maybeStartNativeSessionTitleGeneration.call(this, displayInput, userMessageId,
+              turnTraceContext, nativeResult, nativeModelSelection);
+          }
           this.turnNumber++;
           return { response: nativeResult.text, turnId, traceId, usage, events,
             projection: await this.rebuildProjection() };

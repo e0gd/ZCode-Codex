@@ -1,5 +1,9 @@
 # Tool Change Chain Spec
 
+## Native Codex session title sampling (2026-11-04)
+
+After the first native turn completes, title metadata may use official `thread/sample` on the exact completed source. This capability samples without executing tools; it never starts another task turn, dispatches tool approvals/questions, imports more MCP tools, or falls back to API authentication. `disableMcp: true` and null/tool-attempt results preserve the original title. Core's existing title CAS/event projection remains the sole owner. Regression evidence must include no extra `turn/start`, no task replay, source identity checks, and failure/timeout/cancellation cleanup. See [session titles](../session-title-generation.md#codex-项目标题2026-11-04).
+
 ## Native Codex running child transcript observation (2026-11-04)
 
 Trusted native spawn → child turn start → official live items plus bounded incremental reads of that child's official rollout → existing NativeChildObserver observations → Core message/tool parts and ToolCallProgress → existing child-topic continuous/replayable projection → read-only subagent pane. New custom/function tool work may have no live app-server item, so prose-only fixtures are insufficient. Read only paths bound by official thread/read to a trusted child and constrained to managed sessions; whitelist admitted task input and executed tool call/results, excluding instructions/reasoning/encrypted content. No model execution or child resume is introduced. Active-turn identity, call-ID dedupe, final drain and cancellation/disposal stop the transport observation lifecycle. Full contract and acceptance: [running child input and tool activity](../native-codex-executor.md#running-child-input-and-tool-activity-2026-11-04).

@@ -3,6 +3,7 @@ import type { ModelMessageContentBlock } from "../model/index.js";
 import type { CollaborationMode } from "./session.port.js";
 import type { AskUserQuestion } from "../tools/ask-user-question.js";
 import { createSessionId, type SessionId } from "./shared.js";
+import type { TraceContext } from "../tracing/tracer.js";
 
 export function nativeCodexChildSessionId(sessionId: string, agentId: string): SessionId {
   return createSessionId(`codex_${sessionId}_${agentId}`);
@@ -68,6 +69,16 @@ export interface NativeTurnApproval {
 }
 
 export interface NativeTurnExecutor {
+  /** Tool-free sampling of the exact completed native turn; never replays the user input. */
+  generateTitle?(input: {
+    sessionId: string;
+    threadId: string;
+    turnId: string;
+    prompt: string;
+    traceContext: TraceContext;
+    modelSelection?: ModelSelection;
+    signal: AbortSignal;
+  }): Promise<{ text: string | null }>;
   execute(input: {
     sessionId: string;
     inputId: string;
@@ -83,5 +94,5 @@ export interface NativeTurnExecutor {
     requestApproval(request: NativeTurnApproval): Promise<"allow" | "deny">;
     /** Core owns the existing user-input broker; empty answers mean no user selection. */
     requestUserInput(request: { id: string; toolCallId: string; questions: AskUserQuestion[] }, options: { signal: AbortSignal }): Promise<Record<string, string>>;
-  }): Promise<{ text: string; threadId: string; toolCallCount: number }>;
+  }): Promise<{ text: string; threadId: string; turnId?: string; toolCallCount: number }>;
 }

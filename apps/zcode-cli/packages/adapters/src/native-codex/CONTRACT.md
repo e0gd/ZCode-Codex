@@ -19,6 +19,18 @@ provider, checks the managed account and discovered model/effort before dispatch
 Known cross-authentication thread resumes fail before dispatch with a new-task hint;
 existing thread mappings and history are preserved, and no input is replayed or forked.
 
+The optional `generateTitle` port samples an exact completed native thread/turn using
+the frozen original model selection and authentication source. It accepts a correlated
+trace context and abort signal. It validates the trusted mapping, resumes that same
+thread and calls official `thread/sample` with MCP disabled; it never creates a new
+thread, turn, input receipt, user message or tool execution. Empty or attempted-tool
+samples return null. Source mismatch, unsupported sampling, authentication failure,
+timeout and cancellation reject safely without provider fallback or input replay.
+The sampling connection holds the same session `active.lock` as foreground execution.
+A new foreground execute on this executor cancels its pending title and awaits
+connection/lock cleanup first; external active locks cause title sampling to skip.
+Only one title operation can exist per executor, with a 60-second maximum lifetime.
+
 Both desktop continuous and mobile replayable clients use the same account owner and
 existing Host/CLI command boundary. No browser credential store is introduced. See
 `docs/specs/codex-chatgpt-subscription.md` for product behavior and acceptance.

@@ -28,6 +28,23 @@ const GENERATED_TITLE_EXPECTED_SOURCES: readonly SessionTitleSource[] = [
 ];
 const MIN_GENERATED_TITLE_INPUT_CHARS = 10;
 
+export function maybeStartNativeSessionTitleGeneration(
+  this: AgentRuntimeInternal,
+  input: string,
+  messageID: MessageId,
+  traceContext: TraceContext,
+  source: { threadId: string; turnId?: string },
+  selection: ModelSelection | undefined,
+): void {
+  if (!source.turnId || !selection || !this.nativeTurnExecutor?.generateTitle) return;
+  maybeStartSessionTitleGenerationFromSeed.call(this, input, {
+    messageID, traceContext,
+    // 标题读库期间可能收到后续切模；必须冻结首轮已接纳选型与精确原生来源。
+    modelContext: { selection: structuredClone(selection),
+      nativeSource: { threadId: source.threadId, turnId: source.turnId }, release() {} },
+  });
+}
+
 export function maybeStartSessionTitleGeneration(
   this: AgentRuntimeInternal,
   input: string,
@@ -86,6 +103,7 @@ function maybeStartSessionTitleGenerationFromSeed(
     traceContext: TraceContext;
     bypassShortInputGuard?: boolean;
     offPeakExecutionId?: string;
+    modelContext?: TitleModelContext;
   },
 ): boolean {
   if (
@@ -107,7 +125,7 @@ function maybeStartSessionTitleGenerationFromSeed(
   // 标题任务会越过当前 Turn 的生命周期。入队时冻结 causation，避免后续 await、
   // 调度器或实现重构使后台 Trace 静默丢失指向触发 Span 的 Link。
   const causation = this.agentTelemetry.captureCausation();
-  const modelContext = retainTitleModelContext(this, options.offPeakExecutionId);
+  const modelContext = options.modelContext ?? retainTitleModelContext(this, options.offPeakExecutionId);
 
   const generation = generateAndPersistSessionTitle
     .call(this, input, options.messageID, options.traceContext, {

@@ -2,6 +2,14 @@
 
 The upstream failure comparison and earlier controlled source-desktop acceptance below are retained as baseline evidence. The current project-level dual-engine implementation has separate checks and controlled desktop results described first, including recovery of both engine types after a full process restart. These results do not establish release readiness, live-provider inference, or phone behavior.
 
+## Native session title summaries — 2026-11-04
+
+Root cause: the native branch returned from `executeTurn` before the ordinary title sidecar was scheduled. The protocol host already enabled title generation; no new frontend setting was needed. Codex now samples the first completed native turn through optional `thread/sample`, preserving its admitted provider/model/authentication and original source turn. Existing Core normalization, custom-title/first-input-edit protection, persistence and `SessionTitleUpdated` projection handle the result. Short inputs, child sessions, disabled settings, later turns, failed/empty samples and unsupported official versions keep their existing title. Older conversations are not bulk-renamed. The feature is newer than the published `v3.17.1-codex.2` packages.
+
+Controlled regression evidence: Core native execution/persistence/model-context/off-peak title suites passed **174 tests**; adapter suite passed **141 tests** including subscription/API source preservation, exact-source validation, no new task turn/receipt, cancellation and title-lock preemption by a new foreground input. Existing bootstrap title metadata projection and hidden title-model events each passed their targeted case. Root typecheck/lint and CLI typecheck/lint passed (root 83 warnings; CLI 73 warnings plus 7 admitted unchanged upstream size diagnostics). Final architecture check reported zero violations.
+
+An isolated official Codex **0.166.0** process against a local dummy Responses server passed normal title sampling, a malicious tool-call response returning null without execution, mismatched-source rejection before a model request, and cancellation of a held request. The rollout contained exactly one task turn, with no replay or additional task input receipt. `thread/sample` inherited the completed thread context (8 → 11 input items in the fixture); this is not a context containing only the first user input. The fixture's request omitted `tools` rather than sending `tools: []`; the demonstrated guarantee is that sampling does not execute the attempted tool. No real subscription account or paid-provider inference was used. Final evidence after lock changes remains outside Git in `CodexGitSetup/native-title-sample-final.log` and the isolated `native-title-sample-oisl8o` fixture report.
+
 ## Revisions and environment
 
 - Upstream: `a60ba6a7e5a06742270ca605f5d2cc2766afa7e1`.

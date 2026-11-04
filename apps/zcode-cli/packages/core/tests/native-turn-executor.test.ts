@@ -17,6 +17,118 @@ import { createTestAgentRuntime } from "./test-agent-runtime.js";
 import { createTestSessionEventStore } from "./test-event-store.js";
 import { createRecordingMessageStore } from "./runtime-output-token-continuation-test-helpers.js";
 
+function titleFixture(options: { providerId?: string; enabled?: boolean; parent?: boolean; titleText?: string | null; error?: Error; hold?: Promise<void>; timeoutMs?: number } = {}) {
+  const store = createRecordingMessageStore();
+  const eventStore = createTestSessionEventStore();
+  const sessionId = createSessionId("native-title-regression");
+  const modelFactory = vi.fn(() => { throw new Error("Native titles must not use the API model factory"); });
+  const selection = { providerId: options.providerId ?? "configured-api", modelId: "chosen-model", options: { reasoningLevel: "high" as const } };
+  const generateTitle = vi.fn(async (input: { signal: AbortSignal }) => {
+    if (options.hold) await options.hold;
+    if (options.error) throw options.error;
+    input.signal.throwIfAborted();
+    return { text: options.titleText === undefined ? '{"title":"修复登录按钮"}' : options.titleText };
+  });
+  const execute = vi.fn<NativeTurnExecutor["execute"]>(async () => ({ text: "main response", threadId: "official-thread", turnId: "official-turn", toolCallCount: 0 }));
+  const runtime = createTestAgentRuntime(sessionId, {
+    workingDirectory: process.cwd(), modelSelection: selection,
+    titleGeneration: { enabled: options.enabled ?? true, timeoutMs: options.timeoutMs ?? 1000 },
+    ...(options.parent ? { parentSessionId: createSessionId("parent") } : {}),
+  }, { sessionStore: store as unknown as SessionStorePort, eventStore, modelFactory,
+    nativeTurnExecutor: { execute, generateTitle } });
+  return { runtime, store, eventStore, sessionId, selection, modelFactory, generateTitle, execute };
+}
+
+describe("native session titles", () => {
+  it("keeps the first admitted model when selection changes before the native turn completes", async () => {
+    const f = titleFixture();
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    f.execute.mockImplementationOnce(async () => { started.resolve(); await release.promise;
+      return { text: "main response", threadId: "official-thread", turnId: "official-turn", toolCallCount: 0 }; });
+    const pending = f.runtime.executeTurn("Please fix the mobile login button for this project");
+    await started.promise;
+    f.runtime.setSessionModelSelection({ providerId: "another-provider", modelId: "another-model" });
+    release.resolve(); await pending;
+    await vi.waitFor(() => expect(f.generateTitle).toHaveBeenCalledTimes(1));
+    expect(f.generateTitle.mock.calls[0]?.[0]).toMatchObject({ modelSelection: f.selection });
+    expect(f.modelFactory).not.toHaveBeenCalled();
+  });
+
+  it.each(["timeout", "shutdown"])("aborts an in-flight native title and releases residency on %s", async kind => {
+    const f = titleFixture({ timeoutMs: kind === "timeout" ? 20 : 1000 });
+    let titleSignal: AbortSignal | undefined;
+    f.generateTitle.mockImplementationOnce(async ({ signal }) => { titleSignal = signal;
+      await new Promise<void>((_resolve, reject) => {
+        if (signal.aborted) reject(signal.reason);
+        else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      }); return { text: null }; });
+    await f.runtime.executeTurn("Please fix the mobile login button for this project");
+    await vi.waitFor(() => expect(titleSignal).toBeDefined());
+    if (kind === "shutdown") f.runtime.beginShutdown();
+    await vi.waitFor(() => expect(f.runtime.hasResidencyBlockingWork()).toBe(false));
+    expect(titleSignal?.aborted).toBe(true);
+    expect((await f.store.getSession(f.sessionId))?.titleSource).toBe("first_input");
+    expect(f.modelFactory).not.toHaveBeenCalled();
+  });
+
+  it("skips sampling without an exact source turn and never falls back to API", async () => {
+    const f = titleFixture();
+    f.execute.mockResolvedValueOnce({ text: "main response", threadId: "official-thread", toolCallCount: 0 });
+    await f.runtime.executeTurn("Please fix the mobile login button for this project");
+    expect(f.generateTitle).not.toHaveBeenCalled();
+    expect(f.modelFactory).not.toHaveBeenCalled();
+  });
+
+  it.each(["configured-api", "chatgpt-subscription"])("generates a persisted title using the admitted %s native source", async providerId => {
+    const f = titleFixture({ providerId });
+    const result = await f.runtime.executeTurn("请帮我修复移动端的登录按钮，点击时应该正常打开登录窗口");
+    expect(result.response).toBe("main response");
+    await vi.waitFor(async () => expect(await f.store.getSession(f.sessionId)).toMatchObject({ title: "修复登录按钮", titleSource: "generated" }));
+    expect(f.generateTitle).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      sessionId: f.sessionId, threadId: "official-thread", turnId: "official-turn", modelSelection: f.selection,
+      prompt: expect.stringContaining("请帮我修复移动端的登录按钮"), traceContext: expect.objectContaining({ traceId: expect.any(String) }),
+    }));
+    expect(f.modelFactory).not.toHaveBeenCalled();
+    expect(f.store.savedMessages.filter(m => m.role === "user")).toHaveLength(1);
+    const events = await f.eventStore.getEvents(f.sessionId);
+    expect(events.some(e => e.type === SessionEventType.SessionTitleUpdated && (e.payload as any).source === "generated")).toBe(true);
+    expect(events.filter(e => e.type === SessionEventType.ModelStreaming).some(e => JSON.stringify(e.payload).includes("修复登录按钮"))).toBe(false);
+    await f.runtime.executeTurn("Second task must not rename the session");
+    expect(f.generateTitle).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([{ enabled: false }, { parent: true }, { short: true }])("respects disabled, child and short-input guards: %j", async options => {
+    const f = titleFixture(options);
+    await f.runtime.executeTurn(options.short ? "你好" : "Please fix the mobile login button for this project");
+    expect(f.generateTitle).not.toHaveBeenCalled();
+    expect(f.modelFactory).not.toHaveBeenCalled();
+  });
+
+  it.each([{ titleText: null }, { titleText: "" }, { error: new Error("sample unsupported") }])("keeps first input on empty or failed native title sampling: %j", async options => {
+    const f = titleFixture(options);
+    const prompt = "Please fix the mobile login button for this project";
+    await expect(f.runtime.executeTurn(prompt)).resolves.toMatchObject({ response: "main response" });
+    await vi.waitFor(() => expect(f.generateTitle).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(f.runtime.hasResidencyBlockingWork()).toBe(false));
+    expect(await f.store.getSession(f.sessionId)).toMatchObject({ title: prompt, titleSource: "first_input" });
+    expect(f.modelFactory).not.toHaveBeenCalled();
+  });
+
+  it.each(["custom", "edited"])("does not overwrite %s metadata when a late sample returns", async kind => {
+    const gate = Promise.withResolvers<void>();
+    const f = titleFixture({ hold: gate.promise });
+    await f.runtime.executeTurn("Please fix the mobile login button for this project");
+    await vi.waitFor(() => expect(f.generateTitle).toHaveBeenCalledTimes(1));
+    const firstMessage = f.store.savedMessages.find(m => m.role === "user");
+    await f.store.updateSession({ id: f.sessionId, ...(kind === "custom" ? { title: "My title", titleSource: "custom" }
+      : { title: "Edited input", titleSource: "first_input", revert: { kind: "conversation_rewind", targetMessageID: firstMessage.id, keptMessageIDs: [] } }) });
+    gate.resolve();
+    await vi.waitFor(() => expect(f.runtime.hasResidencyBlockingWork()).toBe(false));
+    expect((await f.store.getSession(f.sessionId))?.title).toBe(kind === "custom" ? "My title" : "Edited input");
+  });
+});
+
 function fixture(nativeTurnExecutor: NativeTurnExecutor, deps: Partial<AgentRuntimeDeps> = {}) {
   const modelFactory = vi.fn(() => {
     throw new Error("ZCode model loop must not run");

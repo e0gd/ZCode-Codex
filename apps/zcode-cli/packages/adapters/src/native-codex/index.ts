@@ -10,6 +10,7 @@ import { CodexConnection, NativeChildObserver, nativeToolName, nativeToolInput, 
 import { ASK_USER_QUESTION_TOOL_NAME, NativeAskUserQuestionInputSchema, detectImageMediaType, normalizeImageMediaType, parseImageDataUrl } from "@zcode/contracts";
 import { NativeCodexAccountController, nativeSubscriptionArguments, nativeSubscriptionEnvironment, readNativeSubscriptionCatalog, type NativeCodexAccountOptions } from "./account.js";
 import { NativeChildTranscriptReader } from "./child-transcript.js";
+import { generateNativeCodexTitle } from "./title.js";
 export { NativeCodexAccountController } from "./account.js";
 export type { NativeCodexAccountOptions } from "./account.js";
 
@@ -174,7 +175,22 @@ async function atomicWrite(path: string, value: unknown): Promise<void> {
 export class NativeCodexExecutor implements NativeTurnExecutor {
   constructor(private readonly options: NativeCodexOptions) {}
 
+  private titleSampling?: { controller: AbortController; settled: Promise<{ text: string | null }> };
+
+  generateTitle(input: Parameters<NonNullable<NativeTurnExecutor["generateTitle"]>>[0]): Promise<{ text: string | null }> {
+    if (this.titleSampling) return Promise.reject(new Error("Native Codex title sampling is already active."));
+    const controller = new AbortController();
+    const settled = generateNativeCodexTitle(this.options, { ...input, signal: AbortSignal.any([input.signal, controller.signal]) });
+    const sampling = { controller, settled };
+    this.titleSampling = sampling;
+    return settled.finally(() => { if (this.titleSampling === sampling) this.titleSampling = undefined; });
+  }
+
   async execute(input: ExecuteInput): ReturnType<NativeTurnExecutor["execute"]> {
+    input.signal.throwIfAborted();
+    // 前台输入优先：先关闭本 executor 的标题连接并释放同一进程锁，再接纳主执行。
+    const sampling = this.titleSampling;
+    if (sampling) { sampling.controller.abort(); await sampling.settled.catch(() => {}); }
     input.signal.throwIfAborted();
     const userInput = nativeUserInput(input);
     const autoSubagents = (await this.options.resolveAutoSubagents?.()) === true;
@@ -586,7 +602,7 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       if (input.signal.aborted) onAbort();
       await done;
       await sequence;
-      return { text, threadId, toolCallCount };
+      return { text, threadId, turnId, toolCallCount };
     } finally {
       finished = true;
       clearInterval(observationTimer);

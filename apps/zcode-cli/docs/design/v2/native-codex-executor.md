@@ -62,6 +62,8 @@ Acceptance covers two configured providers with different dummy keys/endpoints, 
 
 ## Execution and projection chain
 
+Native title metadata uses an optional `generateTitle` capability, separate from `execute`. A successful native execution returns its exact official turn ID together with thread ID. Core may sample the first completed turn for a concise session title using that source and the frozen original model selection. The adapter validates the existing trusted mapping, resumes the same thread on a separate short-lived connection, calls experimental `thread/sample` with `expectedTurnId` and `disableMcp: true`, and closes on success/error/abort. No new model turn, input receipt, thread mapping, tool execution, user-input request, or API fallback is allowed. A null sample, unsupported method or source-turn mismatch leaves the first-input title intact. Core alone cleans/persists the title and projects the existing metadata event; see [session title generation](session-title-generation.md).
+
 ```text
 existing Host owner/lease + workspace/session binding
   -> existing v4 command idempotency and Core admission

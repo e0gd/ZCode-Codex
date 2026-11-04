@@ -1,5 +1,24 @@
 # Session Title Generation
 
+## Codex 项目标题（2026-11-04）
+
+桌面/网页协议宿主已显式启用 `titleGeneration`。原生 Codex 分支也应将首条真实输入作为临时标题，再生成摘要，不能因提前返回而跳过。沿用 root interactive、至少 10 字符、只尝试一次、用户改名优先、编辑首条输入后拒绝迟到结果和失败保留临时标题的规则。已有会话不批量重命名。
+
+Codex 标题使用官方 `thread/sample`，在首轮成功终结后以该轮返回的 threadId/turnId 为精确来源，通过同一配置服务商、模型和认证来源采样。它继承已完成的线程上下文，但提示词明确只总结所附首条输入；不向主 transcript 添加用户/助手消息，不发送新的 `turn/start`，不重放原任务，不执行工具。`disableMcp: true`；尝试工具得到 `text: null` 时保留临时标题。不能把它描述为只包含首次输入的独立模型上下文。
+
+Core 的可选 native title port 持有冻结的首次选型和 source thread/turn；adapter 验证受信映射后建立独立短连接、恢复同一官方 thread、调用 sample、关闭连接。官方返回来源轮不符、方法不支持、选型/认证不符、模型拒绝或超时均属于 sidecar 失败，不能回退到另一个 API/订阅服务商。native executor 未实现该可选能力时跳过，不调用 ZCode ModelFactory。关闭 runtime 和标题超时取消实际请求。
+
+恢复线程与采样的整个区间必须持有同一 session 的 `active.lock`，与主 turn 互斥。标题遇到另一个 executor 的活动主轮/未清理锁时直接跳过，不恢复或采样。每个 executor 只持有一个标题侧车的取消/清理句柄；同一 executor 接受下一次主执行时先取消自己的标题，并等待连接关闭和锁释放后再取主执行锁，前台输入不会因为自己的标题侧车被拒绝。重复标题调用拒绝，不排队。`expectedTurnId` 仍作为官方源轮防护，不能替代进程互斥。标题锁不生成新任务/receipt，异常和取消必须清理锁；进程崩溃遗留锁沿用现有恢复规则。
+
+```text
+首条输入落库 → 官方 Codex 首轮完成 → Core 冻结 source thread/turn + 首轮选型
+  → 既有标题 sidecar / residency → native title port → thread/resume + thread/sample
+  → Core 清洗 + SessionStore CAS → SessionTitleUpdated
+  → desktop continuous / mobile replayable 共用原有标题投影
+```
+
+不新增标题数据库/网页状态，不把摘要作为对话回复或工具显示。使用既有标题 querySource 的模型元事件及关联 trace 观测请求，不伪造官方未报告的 token 用量。回归覆盖 API/订阅同源、短输入/disabled/child/后续轮不调用、手动改名/编辑防覆盖、失败/空结果/timeout/取消、映射/source 不匹配，以及无任务重放或 ZCode Model 调用。真实官方本地 dummy Responses 验收要证明 sample 只采样且不会执行请求的工具。
+
 ## 背景
 
 ZCode 目前在首次持久化 session 时直接从用户输入截断得到 `session.title`。这个标题稳定、便宜，但对长 prompt、带上下文的需求、中文/英文混合输入和文件附件场景不够可读。
