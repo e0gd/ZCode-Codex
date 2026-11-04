@@ -1,5 +1,17 @@
 # Native Codex validation — 2026-11-03
 
+## Follow-up source fixes and authentication limits — 2026-11-04
+
+The development branch includes `c40d750a` (native session title summaries, detailed below), `12d30272` (encoded child task display) and `01a569d0` (desktop browser OAuth). These commits are newer than the public `v3.17.1-codex.2` attachments. The locally updated portable application does not update public installers.
+
+For `12d30272`, adapter regressions passed 174 cases and Core native-turn regressions passed 90. An isolated real Codex/packaged CLI run used the exact `c2a-msg-v1:OTErNzg95aSa5bCR` spawn input and verified readable `91+78=多少` labels/input, live tool progress, equivalent desktop-continuous and web-remote-replayable snapshots, refresh, completion and duplicate-free cold recovery. Invalid envelopes and ordinary outputs remain unchanged; existing Core history is not bulk rewritten.
+
+For `01a569d0`, 207 affected adapter cases, 18 account/catalog bootstrap cases and 43 browser cases passed. Browser coverage includes desktop/mobile widths, Chinese/English, both themes, browser/device methods, cancellation, remote-owner gating and rejected URLs. Two representative screenshots were visually inspected. Root and CLI typechecks passed; root lint had 0 errors / 83 existing warnings, CLI lint 0 errors / 73 warnings and 7 admitted upstream line-count diagnostics; architecture checks reported zero violations. The normal pre-push hook passed, including 233 affected engineering tests with one platform skip.
+
+The installed Codex executable was discovered successfully, and official account/read returned signed-out. An isolated real-binary device login request returned HTTP 403. The rebuilt packaged runtime successfully started browser OAuth, polled its pending state, cancelled it, classified the device failure and retried browser login; it never opened the URL or authorized an account. A subsequent user screenshot of the actual official browser page returned `unsupported_country_region_territory`. Thus real account authorization and subscription inference remain unverified; the observed access-region rejection is an official service restriction that this integration cannot remove.
+
+A separate local icon audit found the custom portable launcher's icon had only one 32×32 low-color frame. Standard Windows package resources and the original ZCode executable have matching seven 16–256 px, 32-bit frames. Two local shortcuts were pointed to that full-resolution icon. The launcher/shortcut files are outside Git; this is not a source or public Release change.
+
 The upstream failure comparison and earlier controlled source-desktop acceptance below are retained as baseline evidence. The current project-level dual-engine implementation has separate checks and controlled desktop results described first, including recovery of both engine types after a full process restart. These results do not establish release readiness, live-provider inference, or phone behavior.
 
 ## Native session title summaries — 2026-11-04

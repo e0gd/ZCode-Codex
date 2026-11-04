@@ -13,7 +13,7 @@
 
 ZCode-Codex integrates Codex into the [ZCode](https://github.com/zai-org/ZCode) AI coding workspace, preserving native ZCode features while making official Codex available through the ZCode interface. Install the Codex CLI separately; ZCode locates and starts it. This repository includes the desktop client, Web interface, shared UI and Agent CLI source.
 
-The development branch is `native-codex`; `main` preserves the upstream baseline. New projects default to ZCode; choosing Codex at creation fixes that project's sessions to Codex. Existing projects default to ZCode. Codex supports OpenAI Responses API key providers configured in ZCode and ChatGPT subscription login through Manage Models, without per-project environment variables. Subscription support requires a new client containing this change; existing Releases do not gain it automatically.
+The development branch is `native-codex`; `main` preserves the upstream baseline. New projects default to ZCode; choosing Codex at creation fixes that project's sessions to Codex. Existing projects default to ZCode. Codex supports OpenAI Responses API key providers configured in ZCode and ChatGPT subscription login through Manage Models, without per-project environment variables. Subscription login and live child output are included in `v3.17.1-codex.2`; the subsequent title, encoded-input and browser-login fixes require a newer source build and are not yet in the public packages.
 
 ## Project strengths
 
@@ -43,7 +43,9 @@ The execution method is fixed after creation. Existing ZCode projects cannot be 
 
 ### Use a ChatGPT subscription
 
-Open **Settings → Manage Models → ChatGPT subscription (Codex)**, click Sign in, then enter the displayed device code on the official authorization page. After signing in, open a Codex project and select the **ChatGPT subscription** group and a model in the model selector. The catalog comes from official Codex; listing a model does not guarantee account quota or server permission. Rejections remain visible and never trigger a switch to API billing.
+Open **Settings → Manage Models → ChatGPT subscription (Codex)**. The current source and updated local desktop offer official browser login by default: click Sign in through browser, then open the authorization page to complete login. A separate device-code option remains available; updated Web uses device codes. A device-code request can fail even when Codex is installed (HTTP 403 was reproduced locally). The public `v3.17.1-codex.2` packages do not yet include browser login.
+
+After signing in, open a Codex project and select the **ChatGPT subscription** group and a model in the model selector. The catalog comes from official Codex; listing a model does not guarantee account quota or server permission. Rejections remain visible and never trigger a switch to API billing. If the official page returns `unsupported_country_region_territory`, OpenAI has rejected the current access region; a ZCode change cannot remove that restriction. Browser authorization startup, polling, cancellation and retry have been verified; actual account authorization and subscription inference have not been established.
 
 Subscription model IDs, authentication, service addresses and capability definitions are read-only. The computer rejects incompatible edits from an older Web client and preserves the configuration. Choosing another subscription model or supported reasoning level applies to subsequent inputs; an executing response keeps its existing configuration. Official Codex 0.166 cannot resume an existing thread across API and subscription authentication sources. To switch sources, create a new task in the same Codex project; the original task and history remain intact.
 
@@ -91,6 +93,7 @@ Use [Actions → Desktop packages](https://github.com/e0gd/ZCode-Codex/actions/w
 
 ## Updates
 
+- **2026-11-04 follow-up fixes (source; public packages pending)**: Generate summarized Codex session titles after the first turn (`c40d750a`), decode `c2a-msg-v1:` task envelopes in child input/labels/cards (`12d30272`), and provide explicit desktop browser OAuth alongside device login with clearer device failures (`01a569d0`). Document official regional restrictions and validation limits. Standard Windows packages use the same seven 16–256 px, 32-bit icon frames as upstream; the low-resolution custom launcher icon affected local portable shortcuts only and was corrected locally, outside Git and Release artifacts.
 - **2026-11-04**: Added ChatGPT subscription login and a read-only official model catalog in Manage Models. Fixed official Codex 0.166 child-agent activity, robot-button visibility and background sessions. Child task input and command/tool output now appear while tasks are running. Updated platform downloads and release verification.
 - **2026-11-03**: Project engines, images, structured questions, automatic delegation setting and native child-agent visibility; fixed Host rejection of free-text questions.
 - **2026-10-30**: Updated to ZCode v3.17.1.
