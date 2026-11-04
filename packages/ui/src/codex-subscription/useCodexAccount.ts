@@ -6,6 +6,7 @@ import type { CodexAccountView } from "./contract.js";
 
 const LOGIN_POLL_INTERVAL_MS = 1500;
 type AccountAction = Parameters<CodexAccountView["run"]>[0];
+type LoginMethod = Parameters<CodexAccountView["run"]>[1];
 
 export function useCodexAccount(workspacePath = ""): CodexAccountView {
   // 设置页已注入唯一的配置 Environment；再次按活动远程项目解析，会把账号操作发给另一台机器。
@@ -63,7 +64,7 @@ export function useCodexAccount(workspacePath = ""): CodexAccountView {
   }, [workspacePath, service, fileService, pathAttempt]);
 
   const perform = useCallback(
-    async (action: AccountAction, quiet = false) => {
+    async (action: AccountAction, quiet = false, loginMethod?: LoginMethod) => {
       if (!cwd || mutationPending.current || (quiet && readPending.current)) return;
       const requestGeneration = ++generation.current;
       if (quiet) readPending.current = requestGeneration;
@@ -77,6 +78,7 @@ export function useCodexAccount(workspacePath = ""): CodexAccountView {
           await service.codexAccount({
             workspacePath: cwd,
             action,
+            ...(action === "login" && loginMethod ? { loginMethod } : {}),
             ...(action === "cancel" && loginId.current ? { loginId: loginId.current } : {}),
           }),
         );
@@ -113,12 +115,12 @@ export function useCodexAccount(workspacePath = ""): CodexAccountView {
     return () => clearInterval(timer);
   }, [state?.status, perform]);
   const run = useCallback(
-    async (action: AccountAction) => {
+    async (action: AccountAction, loginMethod?: LoginMethod) => {
       if (!cwd) {
         setPathAttempt((attempt) => attempt + 1);
         return;
       }
-      await perform(action);
+      await perform(action, false, loginMethod);
     },
     [cwd, perform],
   );

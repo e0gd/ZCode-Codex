@@ -13,6 +13,13 @@ provider write owner. Protocol failures invalidate the visible catalog and expos
 fixed error. Pending login completion is correlated with login ID/generation; timeout,
 cancel and disposal retire stale callbacks. Official device URLs are allowlisted.
 
+Login accepts an explicit browser or device-code method; omission preserves device
+authorization. Both use the same official account owner and correlated lifecycle.
+Only the shared validated official browser OAuth URL and its local loopback redirect
+cross the boundary, without rewriting parameters. Device-code acquisition failure
+uses the fixed `device-auth-unavailable` category, never a raw server error. Browser
+login does not automatically fall back, open a browser, execute a task or switch auth.
+
 Each turn resolves and snapshots its exact API or subscription configuration. The
 subscription process removes inherited API credentials, uses the official OpenAI
 provider, checks the managed account and discovered model/effort before dispatch.

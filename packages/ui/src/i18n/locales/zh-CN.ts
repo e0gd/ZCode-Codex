@@ -10,11 +10,22 @@ const zhCN: Record<string, string> = {
   "settings.codexSubscription.status.signed-in": "已登录 ChatGPT",
   "settings.codexSubscription.status.error": "订阅状态暂不可用",
   "settings.codexSubscription.login": "登录 ChatGPT",
+  "settings.codexSubscription.browserLogin": "通过浏览器登录 ChatGPT",
+  "settings.codexSubscription.deviceLogin": "使用设备码登录",
   "settings.codexSubscription.logout": "退出登录",
   "settings.codexSubscription.cancel": "取消登录",
   "settings.codexSubscription.refresh": "刷新状态",
   "settings.codexSubscription.error":
-    "无法完成订阅操作。请确认电脑端已安装可用的官方 Codex，并检查连接后刷新重试。",
+    "无法完成订阅操作。请检查电脑端 Codex 和网络连接后重试。",
+  "settings.codexSubscription.deviceErrorDesktop":
+    "无法获取官方设备授权码。请改用“通过浏览器登录 ChatGPT”，并检查网络及账号是否允许设备码登录。",
+  "settings.codexSubscription.deviceErrorWeb":
+    "无法获取官方设备授权码。请在连接的电脑上通过浏览器登录 ChatGPT，或检查网络及账号是否允许设备码登录后重试。",
+  "settings.codexSubscription.browserInstructions":
+    "在这台电脑的浏览器中完成官方 ChatGPT 登录。完成后返回此处，登录状态会自动更新。",
+  "settings.codexSubscription.browserOnComputer":
+    "电脑端正在等待浏览器登录。请在连接的电脑上完成授权；也可以取消后使用设备码在此登录。",
+  "settings.codexSubscription.openBrowserAuthorization": "打开浏览器登录",
   "settings.codexSubscription.deviceInstructions":
     "打开官方授权页面并输入以下授权码。可以在电脑或手机完成，登录状态由连接的电脑管理。",
   "settings.codexSubscription.openAuthorization": "打开官方授权页面",

@@ -62,6 +62,25 @@ const login = {
     userCode: "ABCD-EFGH",
   },
 };
+const browserAuthorizationUrl =
+  "https://auth.openai.com/oauth/authorize?" +
+  new URLSearchParams({
+    client_id: "fixture-client",
+    response_type: "code",
+    redirect_uri: "http://localhost:1455/auth/callback",
+    state: "fixture-state-1234567890",
+    code_challenge: "a".repeat(43),
+    code_challenge_method: "S256",
+  });
+const browserLogin = {
+  status: "logging-in",
+  models: [],
+  login: {
+    type: "browser",
+    loginId: "fixture-browser-login",
+    authorizationUrl: browserAuthorizationUrl,
+  },
+};
 const signedIn = {
   status: "signed-in",
   account: { email: "fixture@example.test", planType: "plus" },
@@ -106,6 +125,10 @@ for (const width of [390, 1200])
             timeout: 90000,
           });
           await page.getByTestId("codex-account-login").click();
+          assert.equal(
+            requests.find((request) => request.action === "login")?.loginMethod,
+            "device-code",
+          );
           await page.getByTestId("codex-account-code").waitFor();
           assert.equal(await page.getByTestId("codex-account-code").textContent(), "ABCD-EFGH");
           await page.getByTestId("codex-account-open").click();
@@ -150,6 +173,159 @@ for (const width of [390, 1200])
         }
       });
     }
+
+for (const width of [390, 1200])
+  for (const locale of ["zh-CN", "en-US"])
+    for (const theme of ["light", "dark"]) {
+      test(`desktop browser login/cancel and device alternative ${width}/${locale}/${theme}`, async () => {
+        const page = await browser.newPage({ viewport: { width, height: 900 } });
+        const requests = [];
+        let state = signedOut;
+        await page.route("**/account", async (route) => {
+          const input = route.request().postDataJSON();
+          requests.push(input);
+          if (input.action === "login")
+            state = input.loginMethod === "browser" ? browserLogin : login;
+          if (input.action === "cancel") state = signedOut;
+          await route.fulfill({ json: state });
+        });
+        try {
+          await page.goto(
+            `${origin}fixture?${new URLSearchParams({ locale, theme, desktop: "1" })}`,
+            { timeout: 90000 },
+          );
+          await page.getByTestId("codex-account-login").click();
+          await page.getByTestId("codex-account-browser-login").waitFor();
+          assert.equal(
+            requests.find((request) => request.action === "login")?.loginMethod,
+            "browser",
+          );
+          assert.equal(await page.getByTestId("codex-account-code").count(), 0);
+          assert.equal(
+            await page.getByTestId("opened").textContent(),
+            "",
+            "Authorization must not open automatically",
+          );
+          const browserArtifacts = join(tmpdir(), "zcode-codex-browser-login-ui");
+          await mkdir(browserArtifacts, { recursive: true });
+          await page.screenshot({
+            path: join(browserArtifacts, `${width}-${locale}-${theme}.png`),
+            fullPage: true,
+            animations: "disabled",
+          });
+          await page.getByTestId("codex-account-open").click();
+          assert.equal(await page.getByTestId("opened").textContent(), browserAuthorizationUrl);
+          await page.getByTestId("codex-account-cancel").click();
+          await page.getByTestId("codex-account-device-login").click();
+          await page.getByTestId("codex-account-code").waitFor();
+          assert.equal(
+            requests.filter((request) => request.action === "login").at(-1)?.loginMethod,
+            "device-code",
+          );
+          assert.equal(
+            requests.find((request) => request.action === "cancel")?.loginId,
+            "fixture-browser-login",
+          );
+          assert.equal(
+            await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
+            false,
+          );
+        } finally {
+          await page.close();
+        }
+      });
+    }
+
+test("Web observes pending browser login without exposing the computer's callback link", async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 900 } });
+  await page.route("**/account", (route) => route.fulfill({ json: browserLogin }));
+  try {
+    await page.goto(`${origin}fixture?locale=en-US&theme=dark`);
+    await page.getByTestId("codex-account-browser-login").waitFor();
+    assert.equal(await page.getByTestId("codex-account-open").count(), 0);
+    assert.equal(await page.getByTestId("codex-account-device-login").count(), 0);
+    assert.equal(await page.getByTestId("opened").textContent(), "");
+    assert.match(await page.getByTestId("codex-account-browser-login").textContent(), /computer/i);
+  } finally {
+    await page.close();
+  }
+});
+
+test("desktop without a local Settings account keeps device-code login", async () => {
+  const page = await browser.newPage();
+  const requests = [];
+  await page.route("**/account", async (route) => {
+    const input = route.request().postDataJSON();
+    requests.push(input);
+    await route.fulfill({ json: input.action === "login" ? login : signedOut });
+  });
+  try {
+    await page.goto(`${origin}fixture?locale=en-US&theme=light&desktop=1&remoteAccount=1`);
+    await page.getByTestId("codex-account-login").click();
+    await page.getByTestId("codex-account-code").waitFor();
+    assert.equal(
+      requests.find((request) => request.action === "login")?.loginMethod,
+      "device-code",
+    );
+    assert.equal(await page.getByTestId("codex-account-device-login").count(), 0);
+  } finally {
+    await page.close();
+  }
+});
+
+for (const desktop of [false, true])
+  test(`device auth failure has actionable fixed guidance ${desktop ? "desktop" : "Web"}`, async () => {
+    const page = await browser.newPage();
+    await page.route("**/account", (route) =>
+      route.fulfill({
+        json: {
+          status: "error",
+          models: [],
+          errorCode: "device-auth-unavailable",
+          error: "raw sensitive upstream detail",
+        },
+      }),
+    );
+    try {
+      await page.goto(`${origin}fixture?locale=en-US&theme=light${desktop ? "&desktop=1" : ""}`);
+      const alert = page.getByTestId("codex-account-card").getByRole("alert");
+      await alert.waitFor();
+      assert.match(await alert.textContent(), /device/i);
+      assert.match(await alert.textContent(), desktop ? /browser/i : /connected computer/i);
+      assert.doesNotMatch(await alert.textContent(), /sensitive|upstream/);
+    } finally {
+      await page.close();
+    }
+  });
+
+for (const authorizationUrl of [
+  browserAuthorizationUrl.replace("auth.openai.com", "evil.example"),
+  browserAuthorizationUrl.replace(
+    encodeURIComponent("http://localhost:1455/auth/callback"),
+    encodeURIComponent("https://evil.example/auth/callback"),
+  ),
+  browserAuthorizationUrl.replace("code_challenge_method=S256", "code_challenge_method=plain"),
+])
+  test(`unsafe browser authorization remains disabled ${authorizationUrl.includes("evil") ? "origin-or-redirect" : "PKCE"}`, async () => {
+    const page = await browser.newPage();
+    await page.route("**/account", (route) =>
+      route.fulfill({
+        json: { ...browserLogin, login: { ...browserLogin.login, authorizationUrl } },
+      }),
+    );
+    try {
+      await page.goto(`${origin}fixture?locale=en-US&theme=light&desktop=1`);
+      await page.getByTestId("codex-account-card").getByRole("alert").waitFor();
+      assert.equal(await page.getByTestId("codex-account-open").count(), 0);
+      assert.doesNotMatch(
+        await page.getByTestId("codex-account-card").textContent(),
+        /evil\.example|fixture-state/,
+      );
+      assert.equal(await page.getByTestId("opened").textContent(), "");
+    } finally {
+      await page.close();
+    }
+  });
 test("unsafe login URL and read failures stay visible without leaking raw errors", async () => {
   const page = await browser.newPage();
   await page.route("**/account", (route) =>

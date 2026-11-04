@@ -237,12 +237,14 @@ export function resolveModelProviderSideSelectionKey(
  */
 export function ModelProviderSection({
   workspacePath = "",
+  allowBrowserLogin = false,
   connectivityWorkspacePath,
   connectivityWorkspaceRequired = false,
   pendingModelProviderTarget,
   onConsumePendingModelProviderTarget,
 }: {
   workspacePath?: string;
+  allowBrowserLogin?: boolean;
   connectivityWorkspacePath?: string;
   connectivityWorkspaceRequired?: boolean;
   pendingModelProviderTarget?: SettingsModelProviderTarget;
@@ -1095,6 +1097,7 @@ export function ModelProviderSection({
   // 激活远端项目的路径不能作为本机 Codex 账号命令的 cwd。
   const subscriptionEntry = (
     <CodexSubscriptionCard
+      allowBrowserLogin={allowBrowserLogin}
       workspacePath={
         connectivityWorkspacePath ?? (connectivityWorkspaceRequired ? "" : workspacePath)
       }

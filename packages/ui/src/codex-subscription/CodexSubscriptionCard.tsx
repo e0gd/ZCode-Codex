@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { RefreshCwIcon } from "lucide-react";
+import { codexBrowserAuthorizationUrlSchema } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -25,13 +26,25 @@ function safeDeviceUrl(value: string | undefined): string | null {
   }
 }
 
-export function CodexSubscriptionCard({ workspacePath = "" }: CodexSubscriptionCardProps) {
+export function CodexSubscriptionCard({
+  workspacePath = "",
+  allowBrowserLogin = false,
+}: CodexSubscriptionCardProps) {
   const { intl } = useZCodeIntl();
   const platform = usePlatform();
   const { state, busy, failed, run } = useCodexAccount(workspacePath);
   const [openFailed, setOpenFailed] = useState(false);
   const msg = (key: string) => intl.formatMessage({ id: `settings.codexSubscription.${key}` });
-  const authorizationUrl = safeDeviceUrl(state?.login?.verificationUrl);
+  // 浏览器回调在账号 owner 的电脑；Web/远程设置即使收到待登录状态，也不能打开本机 localhost。
+  const canBrowserLogin = allowBrowserLogin && platform.canOpenLocalFiles === true;
+  const browserLogin = state?.login?.type === "browser" ? state.login : undefined;
+  const deviceLogin = state?.login && state.login.type !== "browser" ? state.login : undefined;
+  const browserUrl = codexBrowserAuthorizationUrlSchema.safeParse(browserLogin?.authorizationUrl);
+  const authorizationUrl = browserLogin
+    ? canBrowserLogin && browserUrl.success
+      ? browserUrl.data
+      : null
+    : safeDeviceUrl(deviceLogin?.verificationUrl);
   const status = state?.status ?? (failed ? "error" : "loading");
   return (
     <section
@@ -77,21 +90,40 @@ export function CodexSubscriptionCard({ workspacePath = "" }: CodexSubscriptionC
               {msg("logout")}
             </Button>
           ) : (
-            <Button
-              data-testid="codex-account-login"
-              size="sm"
-              disabled={busy || status === "loading"}
-              onClick={() => void run("login")}
-            >
-              {msg("login")}
-            </Button>
+            <>
+              <Button
+                data-testid="codex-account-login"
+                size="sm"
+                disabled={busy || status === "loading"}
+                onClick={() => void run("login", canBrowserLogin ? "browser" : "device-code")}
+              >
+                {msg(canBrowserLogin ? "browserLogin" : "login")}
+              </Button>
+              {canBrowserLogin ? (
+                <Button
+                  data-testid="codex-account-device-login"
+                  size="sm"
+                  variant="outline"
+                  disabled={busy || status === "loading"}
+                  onClick={() => void run("login", "device-code")}
+                >
+                  {msg("deviceLogin")}
+                </Button>
+              ) : null}
+            </>
           )}
         </div>
       </div>
       <p className="text-ui-base leading-relaxed text-foreground-subtle">{msg("description")}</p>
       {failed || status === "error" || openFailed ? (
         <p role="alert" className="text-ui-base text-destructive">
-          {msg("error")}
+          {msg(
+            state?.errorCode === "device-auth-unavailable"
+              ? canBrowserLogin
+                ? "deviceErrorDesktop"
+                : "deviceErrorWeb"
+              : "error",
+          )}
         </p>
       ) : null}
       {state?.account ? (
@@ -101,32 +133,47 @@ export function CodexSubscriptionCard({ workspacePath = "" }: CodexSubscriptionC
         </p>
       ) : null}
       {state?.status === "logging-in" && state.login ? (
-        <div className="space-y-2 rounded-lg border border-border bg-surface p-3">
-          <p className="text-ui-base text-foreground-subtle">{msg("deviceInstructions")}</p>
-          <code
-            data-testid="codex-account-code"
-            className="block break-all font-mono text-ui-lg font-semibold text-foreground"
-          >
-            {state.login.userCode}
-          </code>
-          <Button
-            data-testid="codex-account-open"
-            size="sm"
-            variant="outline"
-            disabled={!authorizationUrl}
-            onClick={() => {
-              if (!authorizationUrl) return;
-              try {
-                platform.openExternal(authorizationUrl);
-                setOpenFailed(false);
-              } catch {
-                setOpenFailed(true);
-              }
-            }}
-          >
-            {msg("openAuthorization")}
-          </Button>
-          {!authorizationUrl ? (
+        <div
+          data-testid={browserLogin ? "codex-account-browser-login" : undefined}
+          className="space-y-2 rounded-lg border border-border bg-surface p-3"
+        >
+          <p className="text-ui-base text-foreground-subtle">
+            {msg(
+              browserLogin
+                ? canBrowserLogin
+                  ? "browserInstructions"
+                  : "browserOnComputer"
+                : "deviceInstructions",
+            )}
+          </p>
+          {deviceLogin ? (
+            <code
+              data-testid="codex-account-code"
+              className="block break-all font-mono text-ui-lg font-semibold text-foreground"
+            >
+              {deviceLogin.userCode}
+            </code>
+          ) : null}
+          {!browserLogin || canBrowserLogin ? (
+            <Button
+              data-testid="codex-account-open"
+              size="sm"
+              variant="outline"
+              disabled={!authorizationUrl}
+              onClick={() => {
+                if (!authorizationUrl) return;
+                try {
+                  platform.openExternal(authorizationUrl);
+                  setOpenFailed(false);
+                } catch {
+                  setOpenFailed(true);
+                }
+              }}
+            >
+              {msg(browserLogin ? "openBrowserAuthorization" : "openAuthorization")}
+            </Button>
+          ) : null}
+          {(!browserLogin || canBrowserLogin) && !authorizationUrl ? (
             <p role="alert" className="text-ui-base text-destructive">
               {msg("invalidUrl")}
             </p>

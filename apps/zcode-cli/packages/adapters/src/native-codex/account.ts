@@ -1,5 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import type { CodexAccountCommand, CodexAccountState, CodexSubscriptionModel } from "@zcode/shared";
+import { codexBrowserAuthorizationUrlSchema } from "@zcode/shared";
 import { CodexConnection, record, type RpcMessage } from "./connection.js";
 
 const loginTimeoutMs = 10 * 60 * 1000;
@@ -8,6 +9,7 @@ const maxCatalogModels = 500;
 const maxReasoningEfforts = 32;
 const unsafeEnvironmentNames = new Set(["CODEX_HOME", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_API_BASE", "OPENAI_ORGANIZATION", "OPENAI_ORG_ID", "CODEX_ZCODE_API_KEY", "CODEX_API_KEY", "CODEX_AUTH_TOKEN", "CHATGPT_ACCESS_TOKEN", "CHATGPT_BASE_URL", "CODEX_CHATGPT_BASE_URL"]);
 const accountFailureMessage = "ChatGPT subscription authentication is unavailable. Check the official Codex installation or sign in again.";
+class DeviceAuthorizationUnavailable extends Error {}
 
 /** The managed official account must never inherit an API provider's credentials or endpoint. */
 export function nativeSubscriptionEnvironment(env: NodeJS.ProcessEnv, codexHome: string): NodeJS.ProcessEnv {
@@ -99,13 +101,25 @@ export class NativeCodexAccountController {
       if (command.action === "login") {
         if (this.state.status === "logging-in") return;
         this.generation++; this.loginStarting = true;
-        const response = record(await connection.request("account/login/start", { type: "chatgptDeviceCode" }));
+        const browser = command.loginMethod === "browser";
+        let response: Record<string, unknown>;
+        try { response = record(await connection.request("account/login/start", { type: browser ? "chatgpt" : "chatgptDeviceCode" })); }
+        catch (error) {
+          // 本机设备码端点实测可返回 403；安装/发现正常也会失败，保留独立的安全分类。
+          if (!browser) throw new DeviceAuthorizationUnavailable();
+          throw error;
+        }
         this.loginStarting = false;
-        if (response.type !== "chatgptDeviceCode") throw new Error(accountFailureMessage);
+        if (response.type !== (browser ? "chatgpt" : "chatgptDeviceCode")) throw new Error(accountFailureMessage);
         const loginId = boundedString(response.loginId, 512);
-        const userCode = boundedString(response.userCode, 64);
-        if (!/^[A-Za-z0-9][A-Za-z0-9 -]{3,63}$/u.test(userCode)) throw new Error(accountFailureMessage);
-        this.state = { status: "logging-in", models: [], login: { loginId, verificationUrl: safeVerificationUrl(response.verificationUrl), userCode } };
+        let login: NonNullable<CodexAccountState["login"]>;
+        if (browser) login = { type: "browser", loginId, authorizationUrl: codexBrowserAuthorizationUrlSchema.parse(response.authUrl) };
+        else {
+          const userCode = boundedString(response.userCode, 64);
+          if (!/^[A-Za-z0-9][A-Za-z0-9 -]{3,63}$/u.test(userCode)) throw new Error(accountFailureMessage);
+          login = { loginId, verificationUrl: safeVerificationUrl(response.verificationUrl), userCode };
+        }
+        this.state = { status: "logging-in", models: [], login };
         await this.options.onCatalog([]);
         const generation = this.generation;
         this.loginTimer = setTimeout(() => { void this.enqueue(async () => {
@@ -144,10 +158,11 @@ export class NativeCodexAccountController {
       try {
         if (this.disposed) throw new Error(accountFailureMessage);
         await operation();
-      } catch {
+      } catch (error) {
         // 官方原始认证错误可能含 token/URL；边界只返回固定提示并撤销旧目录。
         this.invalidateLogin(); this.connection?.close(); this.connection = undefined;
-        this.state = { status: "error", models: [], error: accountFailureMessage };
+        this.state = { status: "error", models: [], error: accountFailureMessage,
+          ...(error instanceof DeviceAuthorizationUnavailable ? { errorCode: "device-auth-unavailable" as const } : {}) };
         try { await this.options.onCatalog([]); } catch { /* Catalog publication failure remains a visible account error. */ }
       }
       return structuredClone(this.state);

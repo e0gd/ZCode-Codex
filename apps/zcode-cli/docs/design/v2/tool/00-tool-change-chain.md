@@ -1,5 +1,9 @@
 # Tool Change Chain Spec
 
+## Native Codex browser ChatGPT login (2026-11-04)
+
+Explicit local desktop browser-login or Web device-code action → existing settings Host/CLI account command → official Codex account/login/start → validated pending authorization projection → explicit user open/complete or existing cancel/timeout → official account/catalog refresh. This uses the same single account controller and no task/tool execution. Device authorization failures have a fixed safe category; successful binary discovery must not be confused with endpoint availability. Legacy device requests and the existing desktop-continuous/mobile-replayable ownership stay compatible. See [subscription browser authorization](../../../../../../docs/specs/codex-chatgpt-subscription.md#desktop-browser-authorization-and-device-code-failures-2026-11-04).
+
 ## Native Codex encoded child task display (2026-11-04)
 
 Trusted native task input → adapter display publication (one strictly validated `c2a-msg-v1:` UTF-8 Base64 layer) → existing Core child title, user part and spawn/card description → desktop continuous and mobile replayable projections. Native execution arguments and transport relation persistence remain original; repeated publication/restoration must not recursively decode. Unknown/invalid envelopes and other tool outputs remain unchanged. No tool schema, permission or execution changes. See [running child input](../native-codex-executor.md#running-child-input-and-tool-activity-2026-11-04) for bounds and regression requirements.

@@ -54,7 +54,14 @@ function Fixture() {
   const [opened, setOpened] = useState("");
   const [switched, setSwitched] = useState(false);
   return (
-    <PlatformProvider platform={{ openExternal: setOpened } as unknown as IPlatformService}>
+    <PlatformProvider
+      platform={
+        {
+          openExternal: setOpened,
+          canOpenLocalFiles: params.has("desktop"),
+        } as unknown as IPlatformService
+      }
+    >
       <main className="min-h-screen bg-background p-4 text-foreground">
         <button data-testid="unmount" onClick={() => setVisible(false)}>
           Unmount
@@ -63,7 +70,12 @@ function Fixture() {
           Switch owner
         </button>
         <ServiceProvider services={switched ? secondServices : services}>
-          {visible ? <CodexSubscriptionCard workspacePath="" /> : null}
+          {visible ? (
+            <CodexSubscriptionCard
+              workspacePath=""
+              allowBrowserLogin={params.has("desktop") && !params.has("remoteAccount")}
+            />
+          ) : null}
         </ServiceProvider>
         <output data-testid="opened">{opened}</output>
       </main>

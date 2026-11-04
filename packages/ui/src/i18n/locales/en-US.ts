@@ -11,11 +11,22 @@ const enUS: Record<string, string> = {
   "settings.codexSubscription.status.signed-in": "Signed in to ChatGPT",
   "settings.codexSubscription.status.error": "Subscription status unavailable",
   "settings.codexSubscription.login": "Sign in with ChatGPT",
+  "settings.codexSubscription.browserLogin": "Sign in with ChatGPT in browser",
+  "settings.codexSubscription.deviceLogin": "Use device code",
   "settings.codexSubscription.logout": "Sign out",
   "settings.codexSubscription.cancel": "Cancel sign-in",
   "settings.codexSubscription.refresh": "Refresh status",
   "settings.codexSubscription.error":
-    "The subscription operation could not complete. Check the official Codex installation on the connected computer and the connection, then refresh to retry.",
+    "The subscription operation could not complete. Check Codex on the connected computer and the network, then retry.",
+  "settings.codexSubscription.deviceErrorDesktop":
+    "Could not obtain an official device authorization code. Use browser sign-in, and check the network and whether device-code login is enabled for the account.",
+  "settings.codexSubscription.deviceErrorWeb":
+    "Could not obtain an official device authorization code. Sign in through a browser on the connected computer, or check the network and whether device-code login is enabled for the account before retrying.",
+  "settings.codexSubscription.browserInstructions":
+    "Complete the official ChatGPT sign-in in a browser on this computer. Return here afterward; the login status updates automatically.",
+  "settings.codexSubscription.browserOnComputer":
+    "Browser sign-in is pending on the connected computer. Complete it there, or cancel and use a device code to sign in here.",
+  "settings.codexSubscription.openBrowserAuthorization": "Open browser sign-in",
   "settings.codexSubscription.deviceInstructions":
     "Open the official authorization page and enter this code. You can authorize on a computer or phone; the connected computer manages the login.",
   "settings.codexSubscription.openAuthorization": "Open official authorization page",
