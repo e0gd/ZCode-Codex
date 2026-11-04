@@ -49,7 +49,7 @@ Subscription model IDs, authentication, service addresses and capability definit
 
 The current official website has no new subscription login card. Sign in on the modified desktop first, then continue an existing subscription task from the official website. Whether the older frontend recognizes the new model catalog depends on client compatibility; it cannot edit subscription definitions. The updated source Web UI can manage login through the same Host but requires a separate deployment.
 
-This describes the current source implementation, not a newly published Release. Real-account browser authorization and subscription inference still require acceptance testing.
+Subscription login and live child-tool output require `v3.17.1-codex.2` or newer; older packages do not gain these changes automatically. Real-account browser authorization and subscription inference still require acceptance testing.
 
 ### Enable parallel Codex subagents
 
@@ -83,12 +83,13 @@ Create the Codex project and save delegation settings **on the desktop first**, 
 
 Download the actual attachments in this fork's [Releases](https://github.com/e0gd/ZCode-Codex/releases). No attachments means no published package; upstream installers do not contain this integration. Source commands appear below under Packaging. Codex is not bundled. To build a Preview application alongside the original while using the production backend, set `ZCODE_ENV=production` and `ZCODE_PREVIEW_IDENTITY=1`. Renaming the repository does not migrate application data or change an existing local installation's independent data.
 
-Current preview: [v3.17.1-codex.1](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.1). The installed application is named **ZCode Preview**. Packages are unsigned and macOS builds are not notarized. Platform-specific SHA256 manifests are included; the release page distinguishes available packages from pending targets.
+New preview: [v3.17.1-codex.2](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.2); platform availability depends on its actual attachments. **Windows x64 downloads are complete `.exe` installers**. Start the installed application from its icon or executable; PowerShell is unnecessary. The installed application is named **ZCode Preview**. Packages are unsigned and macOS builds are not notarized. Platform-specific SHA256 manifests are included. Exit and reopen the application after updating to activate new code. The previous `.1` release remains available in release history.
 
 Use [Actions → Desktop packages](https://github.com/e0gd/ZCode-Codex/actions/workflows/desktop-packages.yml) to manually build Windows x64, macOS arm64/x64 and Linux x64. Successful jobs provide installers and SHA256 manifests as run artifacts. Availability depends on actual job results; see [build and download instructions](docs/testing/desktop-packages.md).
 
 ## Updates
 
+- **2026-11-04**: Added ChatGPT subscription login and a read-only official model catalog in Manage Models. Fixed official Codex 0.166 child-agent activity, robot-button visibility and background sessions. Child task input and command/tool output now appear while tasks are running. Updated platform downloads and release verification.
 - **2026-11-03**: Project engines, images, structured questions, automatic delegation setting and native child-agent visibility; fixed Host rejection of free-text questions.
 - **2026-10-30**: Updated to ZCode v3.17.1.
 - 2026-10-19: Updated to ZCode v3.16.2.

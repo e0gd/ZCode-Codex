@@ -13,7 +13,7 @@
 
 ZCode-Codex 是集成 Codex 的 [ZCode](https://github.com/zai-org/ZCode) AI 编程工作台，在保留原生 ZCode 功能的基础上，让用户在 ZCode 界面中使用官方 Codex。Codex CLI 需单独安装，由 ZCode 查找并启动。仓库包含桌面客户端、Web、共享 UI 和 Agent CLI 源码。
 
-默认开发分支为 `native-codex`；`main` 保留上游基线。新建项目默认使用 ZCode，也可选择 Codex；保存后该项目的会话固定经过所选引擎，旧项目默认 ZCode。Codex 支持 ZCode 中配置的 OpenAI Responses API Key 服务商，以及“管理模型”中的 ChatGPT 订阅登录，无需为项目设置环境变量。订阅功能需要包含此变更的新版客户端，旧 Release 不会自动获得该功能。
+默认开发分支为 `native-codex`；`main` 保留上游基线。新建项目默认使用 ZCode，也可选择 Codex；保存后该项目的会话固定经过所选引擎，旧项目默认 ZCode。Codex 支持 ZCode 中配置的 OpenAI Responses API Key 服务商，以及“管理模型”中的 ChatGPT 订阅登录，无需为项目设置环境变量。订阅登录和子任务实时输出需要 `v3.17.1-codex.2` 或更新版本，旧安装包不会自动获得这些功能。
 
 ## 项目优势
 
@@ -55,7 +55,7 @@ ZCode-Codex 是集成 Codex 的 [ZCode](https://github.com/zai-org/ZCode) AI 编
 
 该开关默认关闭。开启后，Codex 可按需派生子 Agent 处理独立工作；它控制自动派生策略，不设置并发数量，也不保证每轮都会创建子 Agent。关闭时仍可明确要求，例如：“请派生两个子 Agent，分别检查前端和后端。”
 
-设置保存后从**下一轮对话**生效，作用于这台电脑执行的 Codex 会话，包括连接该电脑的网页／手机会话。派生后可点击输入区的**机器人按钮**查看后台子 Agent 列表，再进入只读子会话查看进展。
+设置保存后从**下一轮对话**生效，作用于这台电脑执行的 Codex 会话，包括连接该电脑的网页／手机会话。派生后可点击输入区的**机器人按钮**查看后台子 Agent 列表，再进入只读子会话查看任务输入、运行中的命令／工具输出和回复。机器人按钮在子任务运行期间显示，全部结束后隐藏；派生记录仍可打开。工具实时输出显示有长度限制的预览，不展示模型私有推理。
 
 ### 官网网页／手机端的限制
 
@@ -83,12 +83,13 @@ ZCode-Codex 是集成 Codex 的 [ZCode](https://github.com/zai-org/ZCode) AI 编
 
 公开安装包以本仓库 [Releases](https://github.com/e0gd/ZCode-Codex/releases) 实际附件为准；没有附件表示尚未发布，上游安装包不包含修改版功能。各系统的源码构建命令见下方“打包”。Codex 不随安装包内置。自行打包要与原版并排安装时，设置 `ZCODE_ENV=production`、`ZCODE_PREVIEW_IDENTITY=1`。仓库改名不会自动迁移原版数据，也不会改变已有本地修改版的独立数据。
 
-当前预览版：[v3.17.1-codex.1](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.1)。安装后应用名为 **ZCode Preview**；预览包未签名，macOS 包未公证。各平台附带 SHA256 校验文件，已发布版本和待完成的平台均在发行页注明。
+新版预览：[v3.17.1-codex.2](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.2)，各平台是否完成发布以该页实际附件为准。**Windows x64 下载 `.exe` 完整安装程序**，安装后通过应用图标或 EXE 启动，无需 PowerShell。安装后应用名为 **ZCode Preview**；预览包未签名，macOS 包未公证。各平台附带 SHA256 校验文件。更新后需退出并重新打开应用才能使用新代码；旧版 `.1` 下载保留在历史 Release 中。
 
 也可在 [Actions → Desktop packages](https://github.com/e0gd/ZCode-Codex/actions/workflows/desktop-packages.yml) 手动构建 Windows x64、macOS arm64/x64 和 Linux x64，成功的任务提供安装包与 SHA256 校验文件。当前是构建入口，实际可下载状态以任务结果为准；[构建与下载说明](docs/testing/desktop-packages.md) 包含限制和操作步骤。
 
 ## 更新
 
+- **2026-11-04**：新增管理模型中的 ChatGPT 订阅登录和只读官方模型目录；修复官方 Codex 0.166 子 Agent 派生记录、机器人按钮及后台子会话显示；子任务输入和命令／工具输出可在运行中查看，无需等到任务结束。更新多系统下载与发布校验流程。
 - **2026-11-03**：在 ZCode 中集成 Codex，支持按项目选择执行方式、图片输入、交互提问、Codex 自动派生设置与子 Agent 可视化；修复纯文字提问被 Host 拒绝的问题。
 - **2026-10-30**：更新至 ZCode v3.17.1 版本。
 - 2026-10-19：更新至 ZCode v3.16.2 版本。

@@ -3,6 +3,10 @@ name: Publish desktop preview
 on:
   workflow_dispatch:
     inputs:
+      release_tag:
+        description: Existing Codex prerelease tag at the package source commit
+        required: true
+        type: string
       run_id:
         description: Desktop packages run containing the successful artifact
         required: true
@@ -30,6 +34,7 @@ jobs:
       GH_REPO: ${{ github.repository }}
       PACKAGE_RUN_ID: ${{ inputs.run_id }}
       PACKAGE_PLATFORM: ${{ inputs.platform }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
     steps:
       - uses: actions/setup-node@v4
         with:
@@ -37,8 +42,10 @@ jobs:
       - name: Validate source and destination
         run: |
           [[ "$PACKAGE_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-codex\.[0-9]+$ ]]
           gh api "repos/$GH_REPO/actions/runs/$PACKAGE_RUN_ID" > /tmp/source-run.json
-          gh release view v3.17.1-codex.1 --json isPrerelease > /tmp/preview-release.json
+          gh release view "$RELEASE_TAG" --json isPrerelease > /tmp/preview-release.json
+          gh api "repos/$GH_REPO/commits/$RELEASE_TAG" > /tmp/release-commit.json
           node --input-type=module <<'NODE'
           import { readFileSync } from 'node:fs';
           import assert from 'node:assert/strict';
@@ -46,7 +53,10 @@ jobs:
           assert.equal(run.repository.full_name, process.env.GH_REPO);
           assert.equal(run.path, '.github/workflows/desktop-packages.yml');
           assert.equal(JSON.parse(readFileSync('/tmp/preview-release.json')).isPrerelease, true);
+          // 发布标签必须对应构建源码，防止旧包被当作新版功能发布。
+          assert.equal(run.head_sha, JSON.parse(readFileSync('/tmp/release-commit.json')).sha);
           NODE
+          node -e 'const r = require("/tmp/source-run.json"); console.log("SOURCE_SHA=" + r.head_sha)' >> "$GITHUB_ENV"
       - name: Wait for target artifact
         run: |
           node --input-type=module <<'NODE'
@@ -60,7 +70,7 @@ jobs:
           let ready = false;
           for (let attempt = 0; attempt < 60; attempt++) {
             const artifacts = api(base + '/artifacts').artifacts;
-            ready = artifacts.some(a => !a.expired && a.name.startsWith('ZCode-Codex-' + process.env.PACKAGE_PLATFORM + '-'));
+            ready = artifacts.some(a => !a.expired && a.name === 'ZCode-Codex-' + process.env.PACKAGE_PLATFORM + '-' + process.env.SOURCE_SHA);
             if (ready) break;
             if (api(base).status === 'completed') throw new Error('Source run completed without this target artifact');
             console.log('Waiting for ' + process.env.PACKAGE_PLATFORM + ' artifact');
@@ -72,7 +82,7 @@ jobs:
         with:
           github-token: ${{ github.token }}
           run-id: ${{ inputs.run_id }}
-          pattern: ZCode-Codex-${{ inputs.platform }}-*
+          name: ZCode-Codex-${{ inputs.platform }}-${{ env.SOURCE_SHA }}
           path: release-input
           merge-multiple: true
       - name: Verify and publish
@@ -90,6 +100,6 @@ jobs:
           const manifest = 'SHA256SUMS-' + process.env.PACKAGE_PLATFORM + '.txt';
           renameSync('SHA256SUMS.txt', manifest);
           const assets = files.filter(f => required.some(p => p.test(f)));
-          const result = spawnSync('gh', ['release', 'upload', 'v3.17.1-codex.1', ...assets, manifest], { stdio: 'inherit' });
+          const result = spawnSync('gh', ['release', 'upload', process.env.RELEASE_TAG, ...assets, manifest], { stdio: 'inherit' });
           assert.equal(result.status, 0, 'Release upload failed');
           NODE

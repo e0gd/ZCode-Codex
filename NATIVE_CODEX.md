@@ -6,7 +6,13 @@ For desktop project creation, the exact automatic-delegation setting path, and o
 
 The branch starts at upstream `a60ba6a7e5a06742270ca605f5d2cc2766afa7e1` (ZCode 3.17.1), preserving its Git history. The migration contains the existing native executor, provider/model selection, approval and transcript fixes, and context-compaction notification handling. It includes the two compaction metadata/recovery changes that were absent from the external patch manifest. Source archives, local launchers, databases, credentials, installed applications, and machine diagnostics are not part of this branch.
 
-## Build
+## Preview downloads
+
+The `v3.17.1-codex.2` [release page](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.2) contains the latest available platform packages and SHA256 manifests. Windows x64 uses a complete `.exe` installer, not a standalone launcher or PowerShell script. macOS uses `.dmg`/`.zip`; Linux x64 uses `.AppImage`, `.deb`, `.rpm` and `.pkg.tar.zst`. Only actual release attachments count as published. Official Codex must still be installed separately. Exit and reopen the updated desktop before using the new code.
+
+This version includes ChatGPT subscription login, modern official child-agent activity, and live child task input/command output in the read-only sub-session pane. The robot button is shown while children run; completed spawn records remain accessible. Tool output previews are bounded and do not expose private reasoning. See the [2026-11-04 validation records](docs/testing/native-codex-validation.md) for the controlled runtime/browser checks and remaining real-account/platform acceptance limits.
+
+## Build from source
 
 Use the Node.js and pnpm versions in `mise.toml`:
 
