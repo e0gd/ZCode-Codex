@@ -51,3 +51,11 @@ reasoning and encrypted content are excluded. Reads serialize with native messag
 wait for the child's turn identity, drain before its terminal and stop on disposal.
 Core's existing child writer persists these facts and exposes bounded running Bash
 output through the existing ToolCallProgress contract.
+
+The observer decodes one valid `c2a-msg-v1:` UTF-8 Base64 layer at its display
+publication boundary: child prompts, individual user text blocks and Agent card
+prompts/descriptions. Invalid, unknown and unmarked text stays unchanged. Original
+native relations and execution arguments remain untouched; restoration republishes
+through the same boundary without recursive decoding. Core persists the resulting
+display values for both desktop continuous and mobile replayable clients. Existing
+Core history is not rewritten. See the native executor spec for bounds and evidence.

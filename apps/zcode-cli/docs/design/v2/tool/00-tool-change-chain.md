@@ -1,5 +1,9 @@
 # Tool Change Chain Spec
 
+## Native Codex encoded child task display (2026-11-04)
+
+Trusted native task input → adapter display publication (one strictly validated `c2a-msg-v1:` UTF-8 Base64 layer) → existing Core child title, user part and spawn/card description → desktop continuous and mobile replayable projections. Native execution arguments and transport relation persistence remain original; repeated publication/restoration must not recursively decode. Unknown/invalid envelopes and other tool outputs remain unchanged. No tool schema, permission or execution changes. See [running child input](../native-codex-executor.md#running-child-input-and-tool-activity-2026-11-04) for bounds and regression requirements.
+
 ## Native Codex session title sampling (2026-11-04)
 
 After the first native turn completes, title metadata may use official `thread/sample` on the exact completed source. This capability samples without executing tools; it never starts another task turn, dispatches tool approvals/questions, imports more MCP tools, or falls back to API authentication. `disableMcp: true` and null/tool-attempt results preserve the original title. Core's existing title CAS/event projection remains the sole owner. Regression evidence must include no extra `turn/start`, no task replay, source identity checks, and failure/timeout/cancellation cleanup. See [session titles](../session-title-generation.md#codex-项目标题2026-11-04).

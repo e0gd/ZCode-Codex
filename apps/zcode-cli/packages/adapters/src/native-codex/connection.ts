@@ -29,6 +29,28 @@ export interface NativeChildRelation {
   agentType: string;
 }
 
+const childTaskEnvelopePrefix = "c2a-msg-v1:";
+const maximumEncodedChildTaskLength = 1024 * 1024;
+
+function childTaskDisplay(text: string): string {
+  // 官方子任务带传输封装；仅在展示边界剥一层，不能改执行参数或反复解码关系状态。
+  if (!text.startsWith(childTaskEnvelopePrefix) || text.length > childTaskEnvelopePrefix.length + maximumEncodedChildTaskLength) return text;
+  const encoded = text.slice(childTaskEnvelopePrefix.length);
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded) || (encoded.includes("=") && encoded.length % 4 !== 0)) return text;
+  const bytes = Buffer.from(encoded, "base64");
+  if (bytes.toString("base64").replace(/=+$/, "") !== encoded.replace(/=+$/, "")) return text;
+  try { return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes); }
+  catch { return text; }
+}
+
+function childTaskCard(item: RecordValue): RecordValue {
+  return typeof item.prompt === "string" ? { ...item, prompt: childTaskDisplay(item.prompt) } : item;
+}
+
+function childTaskDescription(item: RecordValue): string {
+  return typeof item.prompt === "string" ? item.prompt : typeof item.agentPath === "string" ? item.agentPath : "Codex";
+}
+
 export function nativeToolName(item: RecordValue): string {
   return item.type === "commandExecution" ? "Bash" : item.type === "fileChange" ? "Edit"
     : (item.type === "collabAgentToolCall" && item.tool === "spawnAgent") || (item.type === "subAgentActivity" && item.kind === "started") ? "Agent"
@@ -36,8 +58,9 @@ export function nativeToolName(item: RecordValue): string {
 }
 
 export function nativeToolInput(item: RecordValue): RecordValue {
-  const description = typeof item.prompt === "string" ? item.prompt : typeof item.agentPath === "string" ? item.agentPath : "Codex";
-  return nativeToolName(item) === "Agent" ? { ...item, executionBackend: "codex", description: description.slice(0, 160), subagent_type: "Codex", run_in_background: true } : item;
+  if (nativeToolName(item) !== "Agent") return item;
+  const display = childTaskCard(item);
+  return { ...display, executionBackend: "codex", description: childTaskDescription(display).slice(0, 160), subagent_type: "Codex", run_in_background: true };
 }
 
 export function nativeToolOutput(item: RecordValue, sessionId: string): string {
@@ -46,8 +69,11 @@ export function nativeToolOutput(item: RecordValue, sessionId: string): string {
     : item.type === "collabAgentToolCall" && item.tool === "spawnAgent" && item.status === "completed" && Array.isArray(item.receiverThreadIds)
       ? item.receiverThreadIds[0] : undefined;
   // launch ACK 必须持久化稳定 child 身份；只靠内存 Spawned 事件，重启后嵌套目录也会丢失。
-  if (typeof agentId === "string") return JSON.stringify({ ...item, status: "async_launched", agentId,
-    childSessionId: nativeCodexChildSessionId(sessionId, agentId), agentType: "Codex", description: activityLaunch ? item.agentPath : item.prompt });
+  if (typeof agentId === "string") {
+    const display = childTaskCard(item);
+    return JSON.stringify({ ...display, status: "async_launched", agentId,
+      childSessionId: nativeCodexChildSessionId(sessionId, agentId), agentType: "Codex", description: childTaskDescription(display) });
+  }
   return typeof item.aggregatedOutput === "string" ? item.aggregatedOutput : JSON.stringify(item.result ?? item.changes ?? item.contentItems ?? item);
 }
 
@@ -73,7 +99,7 @@ export class NativeChildObserver {
   private async publish(agentId: string): Promise<void> {
     const child = this.children.get(agentId)!;
     const { retiredTurns: _retired, ...observation } = child;
-    await this.emit({ type: "subagentUpdated", ...observation, items: [...child.items.values()] });
+    await this.emit({ type: "subagentUpdated", ...observation, prompt: childTaskDisplay(child.prompt), items: [...child.items.values()] });
   }
 
   async collaboration(item: RecordValue, parentAgentId?: string): Promise<boolean> {
@@ -174,7 +200,10 @@ export class NativeChildObserver {
       const item = record(p.item); const id = identifier(item.id); const completed = message.method === "item/completed";
       if (child.items.get(id)?.completed) return true;
       if (item.type === "userMessage") {
-        child.inputText = (Array.isArray(item.content) ? item.content : []).flatMap(value => typeof record(value).text === "string" ? [record(value).text] : []).join("\n");
+        child.inputText = (Array.isArray(item.content) ? item.content : []).flatMap(value => {
+          const part = record(value);
+          return typeof part.text === "string" ? [childTaskDisplay(part.text)] : [];
+        }).join("\n");
       } else if (item.type === "agentMessage") {
         const previous = child.items.get(id);
         child.items.set(id, { type: "text", id, text: typeof item.text === "string" && (completed || !previous) ? item.text : previous?.type === "text" ? previous.text : "", completed });

@@ -17,6 +17,19 @@ async function fixture() {
   return { home, paths, reader };
 }
 describe("official native child transcript observations", () => {
+  it("keeps trusted spawn arguments original and decodes the task only at publication", async () => {
+    const { paths, reader } = await fixture();
+    const message = "c2a-msg-v1:OTErNzg95aSa5bCR";
+    await appendFile(paths.parent, row("response_item", { type: "function_call", call_id: "encoded-spawn", namespace: "collaboration", name: "spawn_agent", arguments: JSON.stringify({ message }) }));
+    const prompt = await reader.spawnPrompt("parent", "encoded-spawn");
+    expect(prompt).toBe(message);
+    const updates: unknown[] = [];
+    const observer = new NativeChildObserver(async update => { updates.push(update); }, "session");
+    await observer.collaboration({ type: "subAgentActivity", kind: "started", id: "encoded-spawn", agentThreadId: "child", prompt });
+    expect(updates[0]).toMatchObject({ prompt: "91+78=多少" });
+    expect(observer.relations()[0]?.prompt).toBe(message);
+  });
+
   it("reads the exact trusted parent spawn prompt and incremental completed child tools before final output", async () => {
     const { paths, reader } = await fixture();
     expect(await reader.spawnPrompt("parent", "spawn")).toBe("Actual child task");
