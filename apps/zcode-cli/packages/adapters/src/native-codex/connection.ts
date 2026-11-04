@@ -30,20 +30,23 @@ export interface NativeChildRelation {
 
 export function nativeToolName(item: RecordValue): string {
   return item.type === "commandExecution" ? "Bash" : item.type === "fileChange" ? "Edit"
-    : item.type === "collabAgentToolCall" && item.tool === "spawnAgent" ? "Agent"
+    : (item.type === "collabAgentToolCall" && item.tool === "spawnAgent") || (item.type === "subAgentActivity" && item.kind === "started") ? "Agent"
       : typeof item.tool === "string" ? item.tool : String(item.type);
 }
 
 export function nativeToolInput(item: RecordValue): RecordValue {
-  return nativeToolName(item) === "Agent" ? { ...item, executionBackend: "codex", description: typeof item.prompt === "string" ? item.prompt.slice(0, 160) : "Codex", subagent_type: "Codex", run_in_background: true } : item;
+  const description = typeof item.prompt === "string" ? item.prompt : typeof item.agentPath === "string" ? item.agentPath : "Codex";
+  return nativeToolName(item) === "Agent" ? { ...item, executionBackend: "codex", description: description.slice(0, 160), subagent_type: "Codex", run_in_background: true } : item;
 }
 
 export function nativeToolOutput(item: RecordValue, sessionId: string): string {
-  const agentId = item.type === "collabAgentToolCall" && item.tool === "spawnAgent" && item.status === "completed" && Array.isArray(item.receiverThreadIds)
-    ? item.receiverThreadIds[0] : undefined;
+  const activityLaunch = item.type === "subAgentActivity" && item.kind === "started";
+  const agentId = activityLaunch ? item.agentThreadId
+    : item.type === "collabAgentToolCall" && item.tool === "spawnAgent" && item.status === "completed" && Array.isArray(item.receiverThreadIds)
+      ? item.receiverThreadIds[0] : undefined;
   // launch ACK 必须持久化稳定 child 身份；只靠内存 Spawned 事件，重启后嵌套目录也会丢失。
   if (typeof agentId === "string") return JSON.stringify({ ...item, status: "async_launched", agentId,
-    childSessionId: nativeCodexChildSessionId(sessionId, agentId), agentType: "Codex", description: item.prompt });
+    childSessionId: nativeCodexChildSessionId(sessionId, agentId), agentType: "Codex", description: activityLaunch ? item.agentPath : item.prompt });
   return typeof item.aggregatedOutput === "string" ? item.aggregatedOutput : JSON.stringify(item.result ?? item.changes ?? item.contentItems ?? item);
 }
 
@@ -73,6 +76,18 @@ export class NativeChildObserver {
   }
 
   async collaboration(item: RecordValue, parentAgentId?: string): Promise<boolean> {
+    // 新版 collaboration 发 subAgentActivity，旧桥只认 collabAgentToolCall，真实派生因此不可见。
+    // 仅 started 注册关系；completed/interrupted 是活动提示，不能替代子轮的权威终态。
+    if (item.type === "subAgentActivity") {
+      if (item.kind !== "started") return false;
+      const agentId = identifier(item.agentThreadId);
+      if (this.children.has(agentId)) return false;
+      this.children.set(agentId, { agentId, parentAgentId, parentToolCallId: identifier(item.id),
+        prompt: typeof item.agentPath === "string" ? item.agentPath : "Codex", agentType: "Codex",
+        status: "running", items: new Map(), retiredTurns: new Set() });
+      await this.publish(agentId);
+      return true;
+    }
     if (item.type !== "collabAgentToolCall") return false;
     let added = false;
     for (const value of Array.isArray(item.receiverThreadIds) ? item.receiverThreadIds : []) {
@@ -98,6 +113,12 @@ export class NativeChildObserver {
       }
     }
     return added;
+  }
+
+  acceptsCurrentItem(message: RpcMessage): boolean {
+    const child = this.children.get(String(message.params.threadId));
+    const turnId = message.params.turnId;
+    return typeof turnId === "string" && child?.status === "running" && child.turnId === turnId && !child.retiredTurns.has(turnId);
   }
 
   async notification(message: RpcMessage): Promise<boolean> {
@@ -126,7 +147,7 @@ export class NativeChildObserver {
       } else if (item.type === "agentMessage") {
         const previous = child.items.get(id);
         child.items.set(id, { type: "text", id, text: typeof item.text === "string" && (completed || !previous) ? item.text : previous?.type === "text" ? previous.text : "", completed });
-      } else if (["commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall", "webSearch", "imageView", "imageGeneration"].includes(String(item.type))) {
+      } else if (["commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall", "webSearch", "imageView", "imageGeneration"].includes(String(item.type)) || (item.type === "subAgentActivity" && item.kind === "started")) {
         child.items.set(id, { type: "tool", id, name: nativeToolName(item), input: nativeToolInput(item),
           output: nativeToolOutput(item, this.rootSessionId), completed,
           failed: item.status === "failed" || item.status === "declined" || item.success === false || (typeof item.exitCode === "number" && item.exitCode !== 0) });

@@ -22,3 +22,10 @@ existing thread mappings and history are preserved, and no input is replayed or 
 Both desktop continuous and mobile replayable clients use the same account owner and
 existing Host/CLI command boundary. No browser credential store is introduced. See
 `docs/specs/codex-chatgpt-subscription.md` for product behavior and acceptance.
+
+Native child execution stays in official Codex. The same transport observer accepts
+legacy spawn tool items and official `subAgentActivity` started items, whose item ID
+anchors the existing Agent row and whose thread ID establishes the child relation.
+Only active trusted parent items establish children. Other activity kinds are not
+turn outcomes; child turn terminals remain authoritative. Core alone persists child
+sessions and emits existing product facts for desktop continuous and mobile replay.

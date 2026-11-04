@@ -1,5 +1,9 @@
 # Tool Change Chain Spec
 
+## Native Codex collaboration activity compatibility (2026-11-04)
+
+Official `collaboration.spawn_agent` → `subAgentActivity(kind=started, id, agentThreadId, agentPath)` → existing native child observer and `Agent` launch ACK → Core child session and standard SubagentSpawned/Stopped facts → existing V4 spawn rows, running robot trigger and ended-directory restoration. The legacy `collabAgentToolCall` path remains supported. Only an active trusted parent's started activity establishes a child; no MCP tool-name inference or second executor is introduced. Duplicate activity is idempotent. Completed/interacted/interrupted activity is not an authoritative child-turn outcome and cannot prematurely close the native process. Both continuous desktop and replayable mobile projections use the same persisted events. See [native child observation](../native-codex-executor.md#native-child-observation).
+
 ## Native Codex ChatGPT subscription authentication (2026-11-04)
 
 The existing native turn port admits the exact protected subscription model selection, resolves official managed authentication and validates account/model/effort before thread or turn dispatch. Tools, approvals, user-input requests and child-agent observations retain the same Codex → adapter → Core → desktop continuous/mobile replayable chain; no separate subscription model/tool loop is introduced. API↔subscription changes on an existing thread fail before input dispatch with an actionable safe error; never fork or replay. Missing login, unavailable models and authentication-source mismatch have fixed allowlisted errors. See [subscription specification](../../../../../../docs/specs/codex-chatgpt-subscription.md).

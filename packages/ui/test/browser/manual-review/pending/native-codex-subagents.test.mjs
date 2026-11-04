@@ -1,5 +1,5 @@
 // pnpm exec tsx packages/ui/test/browser/manual-review/pending/native-codex-subagents.test.mjs
-// Core child events -> production projection -> robot/status-panel click -> child topic output.
+// Core child events -> production projection -> production spawn rows and robot -> completed/reloaded child navigation.
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -27,11 +27,16 @@ before(async () => {
     modelFactory() { throw Error("ZCode model loop must not run"); },
     nativeTurnExecutor: { async execute(input) {
       for (const agentId of ["a", "b"]) {
-        await input.onEvent({ type: "toolStarted", id: "spawn-" + agentId, name: "Agent", input: { prompt: "Child " + agentId, run_in_background: true } });
+        await input.onEvent({ type: "toolStarted", id: "spawn-" + agentId, name: "Agent", input: { prompt: "Child " + agentId, description: "Child " + agentId, run_in_background: true } });
         await input.onEvent({ type: "subagentUpdated", agentId, parentToolCallId: "spawn-" + agentId, agentType: "Codex", prompt: "Child " + agentId,
           turnId: "turn-" + agentId, status: "running", items: [{ type: "text", id: "text", text: "LIVE_CHILD_" + agentId, completed: false }] });
       }
       ready.resolve(); await release.promise;
+      for (const agentId of ["a", "b"]) {
+        await input.onEvent({ type: "subagentUpdated", agentId, parentToolCallId: "spawn-" + agentId, agentType: "Codex", prompt: "Child " + agentId,
+          turnId: "turn-" + agentId, status: "success", items: [{ type: "text", id: "text", text: "LIVE_CHILD_" + agentId + "_FINAL", completed: true }] });
+        await input.onEvent({ type: "toolCompleted", id: "spawn-" + agentId, name: "Agent", output: "Child completed" });
+      }
       return { text: "", threadId: "parent", toolCallCount: 2 };
     } },
   });
@@ -44,10 +49,16 @@ before(async () => {
   const snapshot = conversationSnapshotSchema.parse(projections.get(sessionId).getSnapshot());
   assert.equal(snapshot.subagents.running.length, 2);
   const children = Object.fromEntries(snapshot.subagents.running.map(child => [child.childSessionId, conversationSnapshotSchema.parse(projections.get(child.childSessionId).getSnapshot())]));
+  release.resolve(); await turn;
+  const completedSnapshot = conversationSnapshotSchema.parse(projections.get(sessionId).getSnapshot());
+  assert.equal(completedSnapshot.subagents.running.length, 0);
+  assert.equal(completedSnapshot.rows.window.filter(row => row.kind === "subagent").length, 2);
+  const completedChildren = Object.fromEntries(Object.keys(children).map(childId => [childId, conversationSnapshotSchema.parse(projections.get(childId).getSnapshot())]));
+  const stages = { running: {snapshot, children}, completed: {snapshot: completedSnapshot, children: completedChildren} };
   server = await createServer({ root, configFile: false,
     plugins: [react(), tailwindcss(), { name: "native-child-browser", configureServer(vite) {
       vite.middlewares.use(async (req, res, next) => {
-        if (req.url === "/native-child-data") { res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify({ snapshot, children })); }
+        if (req.url === "/native-child-data") { res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(stages)); }
         else if (req.url?.startsWith("/fixture?")) { res.setHeader("Content-Type", "text/html"); res.end(await vite.transformIndexHtml(req.url,
           `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1" /></head><body><div id="root"></div><script type="module" src="${entry}"></script></body></html>`)); }
         else next();
@@ -64,10 +75,27 @@ for (const width of [390, 1200]) for (const locale of ["zh-CN", "en-US"]) for (c
     const page = await context.newPage(); const errors = []; page.on("pageerror", e => errors.push(e.message));
     try {
       await page.goto(new URL(`/fixture?locale=${locale}&theme=${theme}`, origin).href, { timeout: 90000 });
+      const spawnRecords = page.getByTestId("native-spawn-records");
+      const spawnLinks = spawnRecords.locator('[data-testid^="v4-subagent-open-side-pane-"]');
+      await spawnLinks.first().waitFor({ timeout: 15000 }).catch(async error => { throw new Error(`${error.message}; page errors=${JSON.stringify(errors)}; body=${await page.locator("body").innerText()}`); });
+      assert.equal(await spawnLinks.count(), 2, "Both production message spawn rows must render");
       await page.locator('button[data-testid="v4-composer-background-work-trigger"]').click();
       await page.locator('button[data-running-subagent-session-trigger][data-child-session-id$="_a"]').click();
       assert.equal(await page.getByTestId("selected-child").textContent(), "LIVE_CHILD_a");
       assert.match(await page.getByTestId("selected-child").getAttribute("data-child-session-id"), /_a$/);
+      await page.getByTestId("complete-native-children").click();
+      await page.locator('main[data-stage="completed"]').waitFor();
+      assert.equal(await page.getByTestId("v4-composer-background-work-trigger").count(), 0, "Completed children must not retain the running robot");
+      assert.equal(await spawnLinks.count(), 2, "Completion preserves both spawn records");
+      await spawnLinks.first().click();
+      assert.equal(await page.getByTestId("selected-child").textContent(), "LIVE_CHILD_a_FINAL");
+      await page.reload();
+      await page.locator('main[data-stage="completed"]').waitFor();
+      assert.equal(await page.getByTestId("v4-composer-background-work-trigger").count(), 0);
+      assert.equal(await spawnLinks.count(), 2, "Reload preserves completed spawn records");
+      await spawnLinks.nth(1).click();
+      assert.equal(await page.getByTestId("selected-child").textContent(), "LIVE_CHILD_b_FINAL");
+      assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Completed spawn rows must fit the viewport");
       assert.deepEqual(errors, []);
       const artifacts = join(tmpdir(), "zcode-native-child-browser"); await mkdir(artifacts, { recursive: true });
       await page.screenshot({ path: join(artifacts, `${width}-${locale}-${theme}.png`), fullPage: true, animations: "disabled" });

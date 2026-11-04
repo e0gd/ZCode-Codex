@@ -30,7 +30,7 @@ export interface NativeCodexOptions {
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const pathKey = (value: string) => process.platform === "win32" ? resolve(value).toLowerCase() : resolve(value);
 const abortError = () => Object.assign(new Error("Native Codex turn was cancelled."), { name: "AbortError" });
-const toolTypes = new Set(["commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall", "webSearch", "imageView", "imageGeneration"]);
+const toolTypes = new Set(["commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall", "subAgentActivity", "webSearch", "imageView", "imageGeneration"]);
 const invalidRequestCode = -32600;
 const invalidParamsCode = -32602;
 const approvalFailureCode = -32603;
@@ -336,7 +336,8 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       const isChild = children.children.has(String(p.threadId));
       if (isChild && (message.method === "item/started" || message.method === "item/completed")) {
         await children.notification(message);
-        if (await children.collaboration(record(p.item), String(p.threadId))) {
+        // notification 已拒绝旧 child turn；关系注册也必须使用同一门槛，防止迟到的嵌套派生绕过它。
+        if (children.acceptsCurrentItem(message) && await children.collaboration(record(p.item), String(p.threadId))) {
           await atomicWrite(join(directory, "subagents.json"), { version: 1, threadId, children: children.relations() });
         }
       }
@@ -387,7 +388,7 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
               if (Object.keys(answers).length) continuationAnswers.push(answers);
             }
           }
-        } else if (typeof item.type === "string" && toolTypes.has(item.type)) {
+        } else if (typeof item.type === "string" && toolTypes.has(item.type) && (item.type !== "subAgentActivity" || item.kind === "started")) {
           const name = nativeToolName(item);
           await startTool(toolIdentifier(id), name, nativeToolInput(item));
           if (await children.collaboration(item)) {

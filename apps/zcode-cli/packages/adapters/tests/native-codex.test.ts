@@ -9,7 +9,7 @@ import type { NativeTurnApproval, NativeTurnEvent } from "@zcode/contracts";
 const mock = vi.hoisted(() => ({ spawn: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawn: mock.spawn }));
 import { NativeCodexExecutor, createNativeCodexExecutor, createNativeCodexExecutorFromEnv, discoverNativeCodexBinary } from "../src/native-codex/index.js";
-import { NativeChildObserver } from "../src/native-codex/connection.js";
+import { NativeChildObserver, nativeToolInput, nativeToolName, nativeToolOutput } from "../src/native-codex/connection.js";
 
 type Message = { id?: string | number; method?: string; params?: Record<string, unknown>; result?: unknown; error?: unknown };
 const roots: string[] = [];
@@ -142,6 +142,112 @@ describe("native ChatGPT subscription execution", () => {
 });
 
 describe("native child observation", () => {
+  const activity = (id: string, agentThreadId: string, kind = "started") => ({ type: "subAgentActivity", id, kind, agentThreadId, agentPath: `/root/${agentThreadId}`, model: "gpt-6.1-sol", reasoningEffort: "high" });
+
+  it("maps new collaboration launch activities to existing Agent cards and durable launch ACKs", () => {
+    const item = activity("spawn-new", "child-new");
+    expect(nativeToolName(item)).toBe("Agent");
+    expect(nativeToolInput(item)).toMatchObject({ executionBackend: "codex", description: "/root/child-new", subagent_type: "Codex", run_in_background: true });
+    expect(JSON.parse(nativeToolOutput(item, "session"))).toMatchObject({ status: "async_launched", agentId: "child-new", childSessionId: "sess_codex_session_child-new", agentType: "Codex", description: "/root/child-new" });
+  });
+
+  it("observes parallel and nested new activities without reopening completed children on duplicates", async () => {
+    const emit = vi.fn(async () => {}); const observer = new NativeChildObserver(emit, "session");
+    expect(await observer.collaboration(activity("spawn-a", "a"))).toBe(true);
+    expect(await observer.collaboration(activity("spawn-b", "b"))).toBe(true);
+    expect(await observer.collaboration(activity("spawn-c", "c"), "a")).toBe(true);
+    expect(observer.relations()).toContainEqual({ agentId: "c", parentAgentId: "a", parentToolCallId: "spawn-c", prompt: "/root/c", agentType: "Codex" });
+    await observer.notification({ method: "turn/started", params: { threadId: "a", turn: { id: "child-turn" } } });
+    await observer.notification({ method: "turn/completed", params: { threadId: "a", turn: { id: "child-turn", status: "completed" } } });
+    const count = emit.mock.calls.length;
+    expect(await observer.collaboration(activity("spawn-a", "a"))).toBe(false);
+    expect(emit.mock.calls).toHaveLength(count);
+    expect(observer.children.get("a")?.status).toBe("success");
+    const restored = new NativeChildObserver(emit, "session"); restored.restore(observer.relations());
+    expect(restored.relations()).toEqual(observer.relations()); expect(restored.running).toBe(false);
+  });
+
+  it("rejects retired nested activity items through the same child turn admission", async () => {
+    const observer = new NativeChildObserver(async () => {}, "session");
+    await observer.collaboration(activity("spawn", "child"));
+    await observer.notification({ method: "turn/started", params: { threadId: "child", turn: { id: "old" } } });
+    await observer.notification({ method: "turn/completed", params: { threadId: "child", turn: { id: "old", status: "completed" } } });
+    await observer.notification({ method: "turn/started", params: { threadId: "child", turn: { id: "new" } } });
+    const retired = { method: "item/completed", params: { threadId: "child", turnId: "old", item: activity("stale-launch", "phantom") } };
+    await observer.notification(retired);
+    expect(observer.acceptsCurrentItem(retired)).toBe(false);
+    expect(observer.acceptsCurrentItem({ ...retired, params: { ...retired.params, turnId: "new" } })).toBe(true);
+  });
+
+  it("keeps nonlaunch activity hints from inventing relations, tools or terminal outcomes", async () => {
+    const emit = vi.fn(async (_event: NativeTurnEvent) => {}); const observer = new NativeChildObserver(emit, "session");
+    for (const kind of ["interacted", "interrupted", "completed", "unknown"]) {
+      expect(await observer.collaboration(activity(`hint-${kind}`, "unknown", kind))).toBe(false);
+    }
+    expect(observer.relations()).toEqual([]); expect(emit).not.toHaveBeenCalled();
+    await expect(observer.collaboration({ ...activity("invalid", "child"), agentThreadId: "" })).rejects.toThrow("invalid identifier");
+    await observer.collaboration(activity("spawn", "child"));
+    await observer.collaboration(activity("done-hint", "child", "completed"));
+    expect(observer.children.get("child")?.status).toBe("running");
+    await observer.notification({ method: "turn/started", params: { threadId: "child", turn: { id: "child-turn" } } });
+    await observer.notification({ method: "turn/completed", params: { threadId: "child", turn: { id: "child-turn", status: "failed" } } });
+    expect(observer.children.get("child")?.status).toBe("failed");
+  });
+
+  it("maps nested launch activities to Agent parts while excluding nonlaunch activity parts", async () => {
+    const emit = vi.fn(async (_event: NativeTurnEvent) => {}); const observer = new NativeChildObserver(emit, "session");
+    await observer.collaboration(activity("spawn-a", "a"));
+    await observer.notification({ method: "item/completed", params: { threadId: "a", turnId: "child-turn", item: activity("spawn-nested", "b") } });
+    await observer.notification({ method: "item/completed", params: { threadId: "a", turnId: "child-turn", item: activity("end-nested", "b", "completed") } });
+    const latest = emit.mock.calls.at(-1)?.[0] as NativeTurnEvent | undefined;
+    expect(latest).toMatchObject({ type: "subagentUpdated", agentId: "a", items: [expect.objectContaining({ type: "tool", name: "Agent", input: expect.objectContaining({ description: "/root/b" }), completed: true })] });
+    if (latest?.type !== "subagentUpdated" || latest.items[0]?.type !== "tool") throw new Error("Missing nested launch tool");
+    expect(JSON.parse(latest.items[0].output)).toMatchObject({ status: "async_launched", agentId: "b", childSessionId: "sess_codex_session_b" });
+  });
+
+  it("keeps new collaboration children alive after parent completion until the child authoritative outcome", async () => {
+    let finishChild: () => void = () => {};
+    const rpc = server((m, emit) => {
+      if (m.method !== "turn/start") return false;
+      emit({ id: m.id, result: { turn: { id: "turn-1" } } });
+      emit({ method: "item/completed", params: { threadId: "foreign-thread", turnId: "turn-1", item: activity("foreign-spawn", "foreign-child") } });
+      emit({ method: "item/completed", params: { ...activeParams, item: activity("stale-spawn", "stale-child") , turnId: "stale-turn" } });
+      emit({ method: "item/started", params: { ...activeParams, item: activity("spawn-item", "child-1") } });
+      emit({ method: "item/completed", params: { ...activeParams, item: activity("spawn-item", "child-1") } });
+      emit({ method: "turn/started", params: { threadId: "child-1", turn: { id: "child-turn" } } });
+      emit({ method: "item/agentMessage/delta", params: { threadId: "child-1", turnId: "child-turn", itemId: "child-text", delta: "live child" } });
+      emit({ method: "turn/completed", params: { threadId: "child-1", turn: { id: "child-turn", status: "completed" } } });
+      emit({ method: "turn/started", params: { threadId: "child-1", turn: { id: "followup-turn" } } });
+      emit({ method: "item/agentMessage/delta", params: { threadId: "child-1", turnId: "followup-turn", itemId: "followup-text", delta: "live child" } });
+      emit({ method: "item/completed", params: { threadId: "child-1", turnId: "child-turn", item: activity("stale-nested", "phantom-child") } });
+      emit({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed" } } });
+      for (const kind of ["interacted", "interrupted", "completed", "unknown"]) {
+        emit({ method: "item/completed", params: { ...activeParams, item: activity(`hint-${kind}`, "child-1", kind) } });
+      }
+      finishChild = () => {
+        emit({ method: "item/completed", params: { threadId: "child-1", turnId: "followup-turn", item: { type: "agentMessage", id: "followup-text", text: "live child done" } } });
+        emit({ method: "turn/completed", params: { threadId: "child-1", turn: { id: "followup-turn", status: "failed" } } });
+      };
+      return true;
+    });
+    const { executor, options } = await fixture(); const request = input(); let settled = false;
+    const pending = executor.execute(request).then(result => { settled = true; return result; });
+    await vi.waitFor(() => expect(request.onEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "subagentUpdated", agentId: "child-1" })));
+    expect(settled).toBe(false); expect(rpc.children[0]!.kill).not.toHaveBeenCalled();
+    finishChild(); await pending;
+    const events = vi.mocked(request.onEvent).mock.calls.map(([event]) => event);
+    expect(events.filter(event => event.type === "toolStarted")).toHaveLength(1);
+    expect(events).toContainEqual(expect.objectContaining({ type: "toolStarted", id: "spawn-item", name: "Agent" }));
+    expect(events).toContainEqual(expect.objectContaining({ type: "toolCompleted", id: "spawn-item", name: "Agent", output: expect.stringContaining('"status":"async_launched"') }));
+    expect(events).toContainEqual(expect.objectContaining({ type: "subagentUpdated", agentId: "child-1", status: "failed" }));
+    expect(JSON.stringify(events)).toContain("live child done"); expect(JSON.stringify(events)).not.toMatch(/foreign-child|stale-child|phantom-child/);
+    const states = await readdir(join(options.codexHome, "zcode-native"), { recursive: true });
+    const relationsPath = states.find(value => value.endsWith("subagents.json"));
+    expect(relationsPath).toBeDefined();
+    const persisted = JSON.parse(await readFile(join(options.codexHome, "zcode-native", relationsPath!), "utf8"));
+    expect(persisted.children).toEqual([{ agentId: "child-1", parentToolCallId: "spawn-item", prompt: "/root/child-1", agentType: "Codex" }]);
+  });
+
   it("preserves parallel/nested identities, reuses a child, and rejects retired child turns", async () => {
     const emit = vi.fn(async () => {}); const observer = new NativeChildObserver(emit, "session");
     const spawn = (id: string, target: string) => ({ type: "collabAgentToolCall", id, tool: "spawnAgent", status: "completed", receiverThreadIds: [target], prompt: target });
