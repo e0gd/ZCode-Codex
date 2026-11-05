@@ -21,6 +21,13 @@ export const identifier = (value: unknown): string => {
 };
 export type RpcMessage = { method: string; params: RecordValue; id?: string | number };
 
+/** 只保留结构化拒绝码；服务端错误正文可能含 provider 凭据或完整用户内容。 */
+export class NativeCodexRpcError extends Error {
+  constructor(readonly method: string, readonly rpcCode: number) {
+    super(`Codex ${method} failed (${rpcCode}).`);
+  }
+}
+
 export interface PendingNativeNotification { message: RpcMessage; bytes: number }
 const nativeNotificationMaxPending = 1024;
 const nativeNotificationMaxPendingBytes = 32 * 1024 * 1024;
@@ -316,7 +323,7 @@ export class CodexConnection {
             if (message.error || !("result" in message)) {
               const responseError = recordError(message.error);
               request.reject(responseError
-                ? new Error(`Codex ${request.method} failed (${responseError.code}).`)
+                ? new NativeCodexRpcError(request.method, responseError.code)
                 : new Error(`Codex ${request.method} returned an invalid response.`));
             } else request.resolve(message.result);
           }

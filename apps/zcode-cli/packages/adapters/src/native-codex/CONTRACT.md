@@ -1,5 +1,14 @@
 # Native Codex adapter
 
+Native question waits are detached from the serialized notification queue. Core
+owns interactions and persisted answers; this adapter owns their native delivery
+tasks until settled. Explicit async answers use turn/steer with expectedTurnId
+while active, or a same-thread continuation after completion. Only a structured
+invalid-request rejection and observed completion of the exact expected turn
+permit a race continuation. Other failures never replay an answer or input.
+Pending questions and delivery hold completion; cancellation/disconnection abort
+and settle every wait. Blocking questions retain their original RPC response.
+
 The trusted resource resolver receives canonical turn input and may return a bounded
 `pluginReferenceWarning` derived from that turn's selected resources and valid package
 references. It is model-only per-turn application context, never a tool declaration,

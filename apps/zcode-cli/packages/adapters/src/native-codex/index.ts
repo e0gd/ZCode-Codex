@@ -7,11 +7,12 @@ import type { ModelSelection, NativeCodexModelConfig, NativeCodexModelResolver, 
 import type { Provider, ProviderModel } from "@zcode/provider";
 import { compileModelOptionMap } from "@zcode/model-option-map";
 import { CodexConnection, NativeChildObserver, NativeNotificationBudget, nativeToolName, nativeToolInput, nativeToolOutput, identifier, record, type NativeChildRelation, type PendingNativeNotification, type RpcMessage } from "./connection.js";
-import { ASK_USER_QUESTION_TOOL_NAME, NativeAskUserQuestionInputSchema, detectImageMediaType, normalizeImageMediaType, parseImageDataUrl } from "@zcode/contracts";
+import { ASK_USER_QUESTION_TOOL_NAME, detectImageMediaType, normalizeImageMediaType, parseImageDataUrl } from "@zcode/contracts";
 import { NativeCodexAccountController, nativeSubscriptionArguments, nativeSubscriptionEnvironment, readNativeSubscriptionCatalog, type NativeCodexAccountOptions } from "./account.js";
 import { NativeChildTranscriptReader } from "./child-transcript.js";
 import { generateNativeCodexTitle } from "./title.js";
 import { acquireNativeProcessLock, type NativeProcessLock } from "./process-lock.js";
+import { NativeQuestionDeliveries, nativeQuestions } from "./questions.js";
 import type { NativeCodexResourceSnapshot } from "./contract.js";
 import { configureNativeCodexResources, prepareNativeCodexResources, type PreparedNativeCodexResources } from "./resources.js";
 export type { NativeCodexResourcePreferences, NativeCodexResourceSnapshot } from "./contract.js";
@@ -132,28 +133,6 @@ function toolIdentifier(value: unknown): string {
   return id;
 }
 
-function nativeQuestions(value: unknown, asyncMessage = false) {
-  if (!Array.isArray(value) || !value.length) throw new Error("Codex returned invalid user questions.");
-  const ids: string[] = [];
-  const questions = value.map((raw, index) => {
-    const question = record(raw);
-    if (question.isSecret === true) throw new Error("Native Codex secret questions are not supported.");
-    ids.push(asyncMessage ? String(index) : toolIdentifier(question.id));
-    if (question.options !== null && question.options !== undefined && !Array.isArray(question.options)) throw new Error("Codex returned invalid question options.");
-    return {
-      question: asyncMessage ? question.title : question.question,
-      header: asyncMessage ? `Question ${index + 1}` : question.header,
-      options: ((question.options ?? []) as unknown[]).map(rawOption => {
-        const option = record(rawOption);
-        return asyncMessage ? { label: rawOption, description: "" } : { label: option.label, description: option.description ?? "" };
-      }),
-      multiSelect: false as const,
-    };
-  });
-  if (new Set(ids).size !== ids.length) throw new Error("Codex returned duplicate question identifiers.");
-  return { ids, input: NativeAskUserQuestionInputSchema.parse({ questions, metadata: { source: "native-codex" } }) };
-}
-
 function validateMcpOverrides(value: unknown): string[] {
   if (!Array.isArray(value) || value.length % 2 !== 0) {
     throw new Error("Native Codex MCP overrides must be an array of -c and mcp_servers setting pairs.");
@@ -248,8 +227,6 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
     const completedTools = new Set<string>();
     const questionController = new AbortController();
     const asyncQuestionItems = new Set<string>();
-    const continuationAnswers: Array<Record<string, string>> = [];
-    let questionDelivery: Promise<Record<string, string>> | undefined;
     let startContinuation: (text: string) => Promise<void>;
     let complete!: () => void;
     let reject!: (error: Error) => void;
@@ -257,6 +234,11 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
     // Handshake/storage errors can precede awaiting turn completion.
     void done.catch(() => {});
     const fail = (error: Error) => { if (!finished) { finished = true; questionController.abort(error); reject(error); connection?.close(error); } };
+    const serialize = (operation: () => Promise<void>) => {
+      sequence = sequence.then(operation);
+      void sequence.catch(error => fail(error instanceof Error ? error : new Error("Native event delivery failed.")));
+      return sequence;
+    };
     const emit = async (event: NativeTurnEvent) => {
       if (finished || input.signal.aborted) return;
       await input.onEvent(event);
@@ -286,7 +268,7 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
     }, nativeChildObservationIntervalMs);
     observationTimer.unref?.();
     const finishIfIdle = () => {
-      if (parentCompleted && !children.running && !finished) { finished = true; complete(); }
+      if (parentCompleted && !children.running && !questions.hasPending && !finished) { finished = true; complete(); }
     };
     const startText = async (itemId: string) => {
       if (messages.has(itemId)) return;
@@ -300,20 +282,17 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       startedTools.set(id, name); toolCallCount++;
       await emit({ type: "toolStarted", id, name, input: toolInput });
     };
-    const ask = (id: string, toolCallId: string, questionInput: ReturnType<typeof nativeQuestions>["input"]) => {
-      questionDelivery = (async () => {
-        await startTool(toolCallId, ASK_USER_QUESTION_TOOL_NAME, questionInput);
-        questionController.signal.throwIfAborted();
-        const answers = await input.requestUserInput({ id, toolCallId, questions: questionInput.questions }, { signal: questionController.signal });
-        questionController.signal.throwIfAborted();
-        // 只接受明确应答；默认高亮和缺省字段都不能成为用户选择。
-        NativeAskUserQuestionInputSchema.parse({ ...questionInput, answers });
+    const questions = new NativeQuestionDeliveries({
+      signal: questionController.signal, requestUserInput: input.requestUserInput, serialize,
+      startTool: (id, questionInput) => startTool(id, ASK_USER_QUESTION_TOOL_NAME, questionInput),
+      completeTool: async (toolCallId, questionInput, answers) => {
         completedTools.add(toolCallId);
         await emit({ type: "toolCompleted", id: toolCallId, name: ASK_USER_QUESTION_TOOL_NAME, output: JSON.stringify({ questions: questionInput.questions, answers }) });
-        return answers;
-      })();
-      return questionDelivery;
-    };
+      },
+      currentTurn: () => ({ threadId, turnId, completed: parentCompleted }),
+      request: (method, params) => connection!.request(method, params),
+      startContinuation: text => startContinuation(text), onIdle: finishIfIdle, onFailure: fail,
+    });
     const handle = async (message: RpcMessage) => {
       if (finished) return;
       const p = message.params;
@@ -335,10 +314,11 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
           try {
             const toolCallId = toolIdentifier(p.itemId);
             if (startedTools.has(toolCallId)) throw new Error("Codex repeated a question item.");
-            const questions = nativeQuestions(p.questions);
-            const answers = await ask(String(message.id), toolCallId, questions.input);
-            if (!finished && !input.signal.aborted) connection?.send({ id: message.id, result: { answers: Object.fromEntries(questions.input.questions.flatMap((question, index) =>
-              Object.hasOwn(answers, question.question) ? [[questions.ids[index]!, { answers: [answers[question.question]!] }]] : [])) } });
+            const normalized = nativeQuestions(p.questions);
+            await questions.open(String(message.id), toolCallId, normalized.input,
+              answers => connection?.send({ id: message.id, result: { answers: Object.fromEntries(normalized.input.questions.flatMap((question, index) =>
+                Object.hasOwn(answers, question.question) ? [[normalized.ids[index]!, { answers: [answers[question.question]!] }]] : [])) } }),
+              () => connection?.send({ id: message.id, error: { code: invalidParamsCode, message: "Native user input failed." } }));
           } catch (error) {
             if (!finished && !input.signal.aborted) connection?.send({ id: message.id, error: { code: invalidParamsCode, message: "Native user input failed." } });
             throw error;
@@ -427,9 +407,7 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
             if (Array.isArray(item.questions) && item.questions.length && !asyncQuestionItems.has(id)) {
               // 异步提问随 agentMessage 返回，旧桥只读 text，选项因此被当普通文字跳过。
               asyncQuestionItems.add(id);
-              const questions = nativeQuestions(item.questions, true);
-              const answers = await ask(`async:${id}`, `native-question:${id}`, questions.input);
-              if (Object.keys(answers).length) continuationAnswers.push(answers);
+              await questions.open(`async:${id}`, `native-question:${id}`, nativeQuestions(item.questions, true).input);
             }
           }
         } else if (typeof item.type === "string" && toolTypes.has(item.type) && (item.type !== "subAgentActivity" || item.kind === "started")) {
@@ -449,12 +427,6 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
         const turn = record(p.turn);
         if (turn.status === "interrupted" || input.signal.aborted) throw abortError();
         if (turn.status !== "completed") throw nativeTurnError(turn.error, "Official Codex turn failed. Inspect its thread before submitting another input.", lastRetryStreamError);
-        if (continuationAnswers.length) {
-          // 异步问题没有反向 RPC；仅在旧 turn 完成后把真实答案送入同一 thread，绝不重放原输入。
-          const answers = continuationAnswers.splice(0);
-          await startContinuation(`User answered the preceding questions:\n${JSON.stringify(answers)}`);
-          return;
-        }
         // 父轮完成不代表子轮结束；提前 close 会杀死仍在后台运行的原生 child。
         parentCompleted = true; finishIfIdle();
       } else if (message.method === "error") {
@@ -465,8 +437,10 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       }
     };
     const enqueue = (entry: PendingNativeNotification) => {
-      sequence = sequence.then(() => handle(entry.message)).finally(() => notificationBudget.release(entry));
-      void sequence.catch(error => fail(error instanceof Error ? error : new Error("Native event delivery failed.")));
+      void serialize(async () => {
+        try { await handle(entry.message); }
+        finally { notificationBudget.release(entry); }
+      });
     };
     const admitNotification = (message: RpcMessage) => {
       if (finished) return;
@@ -600,6 +574,7 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       input.signal.throwIfAborted();
       const startTurn = async (items: Array<Record<string, unknown>>) => {
         input.signal.throwIfAborted();
+        parentCompleted = false;
         lastRetryStreamError = undefined;
         starting = true;
         const started = record(await connection!.request("turn/start", { threadId, model, ...(resolvedModel ? { effort: effort ?? null } : {}), approvalPolicy: permission.approvalPolicy, sandboxPolicy: permission.sandboxPolicy, additionalContext, input: items }));
@@ -619,7 +594,7 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       clearInterval(observationTimer);
       questionController.abort(new Error("Native turn ended"));
       // 连接可能在 broker 等待期间退出；先让 Core 发布 resolved，再终结整轮和工具。
-      await questionDelivery?.catch(() => {});
+      await questions.settled();
       input.signal.removeEventListener("abort", onAbort);
       connection?.close();
     }

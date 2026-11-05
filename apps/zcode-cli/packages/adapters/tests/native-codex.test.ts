@@ -555,7 +555,7 @@ describe("native question buttons", () => {
     expect(vi.mocked(request.onEvent).mock.calls.map(([event]) => event.type)).toEqual(["toolStarted", "toolCompleted"]);
   });
 
-  it("renders completed async message questions once and continues on the same thread after the answer", async () => {
+  it("renders completed async message questions once and continues on the same thread after a completed turn", async () => {
     let turns = 0;
     const rpc = server((m, emit) => {
       if (m.method !== "turn/start") return false;
@@ -568,14 +568,170 @@ describe("native question buttons", () => {
       return true;
     });
     const { executor } = await fixture();
-    const request = input({ requestUserInput: vi.fn(async () => ({ "Where to host?": "Existing site" })) });
-    const result = await executor.execute(request);
+    const answer = Promise.withResolvers<Record<string, string>>();
+    const request = input({ requestUserInput: vi.fn(() => answer.promise) });
+    const running = executor.execute(request);
+    await vi.waitFor(() => expect(request.requestUserInput).toHaveBeenCalledOnce());
+    answer.resolve({ "Where to host?": "Existing site" });
+    const result = await running;
     expect(request.requestUserInput).toHaveBeenCalledOnce();
     expect(rpc.calls.filter(call => call.method === "thread/start")).toHaveLength(1);
     const continuation = rpc.calls.filter(call => call.method === "turn/start")[1];
     expect(continuation?.params?.threadId).toBe("thread-1");
     expect(JSON.stringify(continuation?.params?.input)).toContain("Existing site");
     expect(result.text).toBe("Choose a hostAnswer received");
+  });
+
+  it("keeps notifications live while awaiting an async answer and steers before the native turn completes", async () => {
+    const answer = Promise.withResolvers<Record<string, string>>();
+    const rpc = server((m, emit) => {
+      if (m.method === "turn/start") {
+        emit({ id: m.id, result: { turn: { id: "turn-1" } } });
+        emit({ method: "item/completed", params: { ...activeParams, item: { type: "agentMessage", id: "question", text: "Choose", questions: [{ title: "Where to host?", options: ["Existing site", "New server"] }] } } });
+        emit({ method: "item/agentMessage/delta", params: { ...activeParams, itemId: "work", delta: "Still working" } });
+        return true;
+      }
+      if (m.method === "turn/steer") {
+        emit({ id: m.id, result: { turnId: "turn-1" } });
+        emit({ method: "item/completed", params: { ...activeParams, item: { type: "agentMessage", id: "work", text: "Still working" } } });
+        emit({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed" } } });
+        return true;
+      }
+      return false;
+    });
+    const { executor } = await fixture();
+    const controller = new AbortController();
+    const request = input({ signal: controller.signal, requestUserInput: vi.fn(() => answer.promise) });
+    const pending = executor.execute(request);
+    void pending.catch(() => {});
+    try {
+      await vi.waitFor(() => expect(request.onEvent).toHaveBeenCalledWith({ type: "textDelta", itemId: "work", delta: "Still working" }));
+      expect(rpc.calls.some(call => call.method === "turn/steer")).toBe(false);
+      answer.resolve({ "Where to host?": "Existing site" });
+      await expect(pending).resolves.toMatchObject({ text: "ChooseStill working", turnId: "turn-1" });
+      expect(rpc.calls.filter(call => call.method === "turn/start")).toHaveLength(1);
+      expect(rpc.calls.find(call => call.method === "turn/steer")?.params).toEqual({ threadId: "thread-1", expectedTurnId: "turn-1", input: [{ type: "text", text: 'User answered the preceding questions:\n[{"Where to host?":"Existing site"}]', text_elements: [] }] });
+    } finally {
+      answer.resolve({}); controller.abort(); await pending.catch(() => {});
+    }
+  });
+
+  it("continues once when exact turn completion wins a structured steer rejection", async () => {
+    let turns = 0;
+    const rpc = server((m, emit) => {
+      if (m.method === "turn/start") {
+        const turnId = `turn-${++turns}`;
+        emit({ id: m.id, result: { turn: { id: turnId } } });
+        if (turns === 1) emit({ method: "item/completed", params: { ...activeParams, item: { type: "agentMessage", id: "question", text: "Choose", questions: [{ title: "Where to host?" }] } } });
+        else emit({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: turnId, status: "completed" } } });
+        return true;
+      }
+      if (m.method === "turn/steer") {
+        emit({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed" } } });
+        emit({ id: m.id, error: { code: -32600, message: "Private provider detail" } });
+        return true;
+      }
+      return false;
+    });
+    const { executor } = await fixture();
+    const result = await executor.execute(input({ requestUserInput: vi.fn(async () => ({ "Where to host?": "Existing site" })) }));
+    expect(result.turnId).toBe("turn-2");
+    expect(rpc.calls.filter(call => call.method === "turn/steer")).toHaveLength(1);
+    const starts = rpc.calls.filter(call => call.method === "turn/start");
+    expect(starts).toHaveLength(2);
+    expect(JSON.stringify(starts[1]!.params!.input)).toContain("Existing site");
+    expect(JSON.stringify(starts[1]!.params!.input)).not.toContain("hello");
+  });
+
+  it.each(["unsupported", "wrong-ack", "disconnect"])("does not replay an answer after %s steering", async outcome => {
+    const rpc = server((m, emit) => {
+      if (m.method === "turn/start") {
+        emit({ id: m.id, result: { turn: { id: "turn-1" } } });
+        emit({ method: "item/completed", params: { ...activeParams, item: { type: "agentMessage", id: "question", text: "Choose", questions: [{ title: "Where to host?" }] } } });
+        return true;
+      }
+      if (m.method === "turn/steer") {
+        if (outcome === "unsupported") emit({ id: m.id, error: { code: -32601, message: "Private provider detail" } });
+        else if (outcome === "wrong-ack") emit({ id: m.id, result: { turnId: "unrelated-turn" } });
+        else rpc.children[0]!.emit("exit", 1);
+        return true;
+      }
+      return false;
+    });
+    const { executor } = await fixture();
+    await expect(executor.execute(input({ requestUserInput: vi.fn(async () => ({ "Where to host?": "Existing site" })) }))).rejects.toBeDefined();
+    expect(rpc.calls.filter(call => call.method === "turn/start")).toHaveLength(1);
+    expect(rpc.calls.filter(call => call.method === "turn/steer")).toHaveLength(1);
+  });
+
+  it("delivers separately answered cards once when the original turn ends during steering", async () => {
+    let turns = 0;
+    const rpc = server((m, emit) => {
+      if (m.method === "turn/start") {
+        const turnId = `turn-${++turns}`;
+        emit({ id: m.id, result: { turn: { id: turnId } } });
+        if (turns === 1) for (const id of ["one", "two"]) emit({ method: "item/completed", params: { ...activeParams, item: { type: "agentMessage", id, text: id, questions: [{ title: id }] } } });
+        return true;
+      }
+      if (m.method === "turn/steer") {
+        const turnId = String(m.params!.expectedTurnId);
+        emit({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: turnId, status: "completed" } } });
+        if (turnId === "turn-1") emit({ id: m.id, error: { code: -32600, message: "Turn ended" } });
+        else emit({ id: m.id, result: { turnId } });
+        return true;
+      }
+      return false;
+    });
+    const { executor } = await fixture();
+    const result = await executor.execute(input({ requestUserInput: vi.fn(async request => ({ [request.questions[0]!.question]: "Explicit answer" })) }));
+    expect(result.turnId).toBe("turn-2");
+    expect(rpc.calls.filter(call => call.method === "turn/start")).toHaveLength(2);
+    const steers = rpc.calls.filter(call => call.method === "turn/steer");
+    expect(steers.map(call => call.params!.expectedTurnId)).toEqual(["turn-1", "turn-2"]);
+    expect(JSON.stringify(steers[1]!.params!.input)).toContain("two");
+  });
+
+  it("holds completion until every async question settles and sends no input for a declined question", async () => {
+    const answers = [Promise.withResolvers<Record<string, string>>(), Promise.withResolvers<Record<string, string>>()];
+    let asked = 0;
+    const rpc = server((m, emit) => {
+      if (m.method !== "turn/start") return false;
+      emit({ id: m.id, result: { turn: { id: "turn-1" } } });
+      for (const id of ["one", "two"]) emit({ method: "item/completed", params: { ...activeParams, item: { type: "agentMessage", id, text: id, questions: [{ title: id }] } } });
+      emit({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed" } } });
+      return true;
+    });
+    const { executor } = await fixture();
+    let finished = false;
+    const request = input({ requestUserInput: vi.fn(() => answers[asked++]!.promise) });
+    const pending = executor.execute(request).then(result => { finished = true; return result; });
+    await vi.waitFor(() => expect(request.requestUserInput).toHaveBeenCalledTimes(2));
+    answers[1]!.resolve({});
+    await vi.waitFor(() => expect(request.onEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "toolCompleted", id: "native-question:two" })));
+    expect(finished).toBe(false);
+    answers[0]!.resolve({});
+    await pending;
+    expect(finished).toBe(true);
+    expect(rpc.calls.filter(call => call.method === "turn/start")).toHaveLength(1);
+    expect(rpc.calls.some(call => call.method === "turn/steer")).toBe(false);
+  });
+
+  it.each(["cancel", "disconnect"])("settles every pending async question on %s", async outcome => {
+    const rpc = server((m, emit) => {
+      if (m.method !== "turn/start") return false;
+      emit({ id: m.id, result: { turn: { id: "turn-1" } } });
+      for (const id of ["one", "two"]) emit({ method: "item/completed", params: { ...activeParams, item: { type: "agentMessage", id, text: id, questions: [{ title: id }] } } });
+      return true;
+    });
+    const { executor } = await fixture(); const controller = new AbortController();
+    const request = input({ signal: controller.signal, requestUserInput: vi.fn(async (_request, options) => new Promise<Record<string, string>>((_resolve, reject) => {
+      options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+    })) });
+    const pending = executor.execute(request);
+    await vi.waitFor(() => expect(request.requestUserInput).toHaveBeenCalledTimes(2));
+    if (outcome === "cancel") controller.abort(); else rpc.children[0]!.emit("exit", 1);
+    await expect(pending).rejects.toBeDefined();
+    expect(rpc.calls.some(call => call.method === "turn/steer")).toBe(false);
   });
 
   it.each(["cancel", "disconnect"])("settles a pending question on %s without fabricating an answer", async outcome => {
