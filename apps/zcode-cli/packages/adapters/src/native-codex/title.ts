@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, realpath, rm } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { NativeCodexModelResolver, NativeTurnExecutor } from "@zcode/contracts";
 import { CodexConnection, identifier, record } from "./connection.js";
+import { acquireNativeProcessLock } from "./process-lock.js";
 import {
   nativeSubscriptionArguments,
   nativeSubscriptionEnvironment,
@@ -44,14 +45,7 @@ export async function generateNativeCodexTitle(
     throw new Error("Native Codex state must be outside the project workspace.");
   const directory = join(state, hash(pathKey(workspace)), hash(input.sessionId));
   signal.throwIfAborted();
-  const lock = join(directory, "active.lock");
-  try {
-    await mkdir(lock);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST")
-      throw new Error("This native session is active; title sampling was skipped.");
-    throw error;
-  }
+  const lock = await acquireNativeProcessLock(directory);
   try {
     const saved = record(JSON.parse(await readFile(join(directory, "thread.json"), "utf8")));
     if (
@@ -97,6 +91,7 @@ export async function generateNativeCodexTitle(
     signal.addEventListener("abort", onAbort, { once: true });
     const connect = async (activeProvider: string) => {
       signal.throwIfAborted();
+      await lock.beforeSpawn();
       connection = new CodexConnection({
         binaryPath: options.binaryPath,
         cwd: workspace,
@@ -149,6 +144,7 @@ export async function generateNativeCodexTitle(
             );
         },
       });
+      await lock.spawned(connection.processId);
       await connection.request("initialize", {
         clientInfo: {
           name: "zcode_native_codex_title",
@@ -239,6 +235,6 @@ export async function generateNativeCodexTitle(
       connection?.close();
     }
   } finally {
-    await rm(lock, { recursive: true, force: true });
+    await lock.release();
   }
 }

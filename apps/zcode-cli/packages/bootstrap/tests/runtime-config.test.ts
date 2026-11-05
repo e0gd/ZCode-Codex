@@ -1,11 +1,247 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createConfig } from "@zcode/adapters/config";
 import { ZCODE_CUA_OFFICIAL_PLUGIN_ID, ZCODE_PLUGIN_ID_ENV_KEY } from "@zcode/shared";
 import { ProviderRegistry } from "@zcode/provider";
+import type { PluginReferenceCatalog } from "@zcode/contracts";
 import {
   resolveAppRuntimeConfig as resolveProductionAppRuntimeConfig,
   runtimeConfigLogContext,
+  resolveNativeCodexResourceSnapshot,
+  buildNativeCodexPluginReferenceWarning,
 } from "../src/app/runtime-config.js";
+
+describe("native Codex resource snapshots", () => {
+  it("derives bounded reference warnings from the admitted snapshot without enabling missing tools", () => {
+    const plugin = {
+      pluginId: "demo@personal",
+      name: "demo",
+      marketplace: "personal",
+      enabled: true,
+      conflictingPluginIds: [],
+      skillQualifiedNames: [],
+      subagentNames: [],
+      rootPath: "/private/plugin",
+      mcpServerNames: ["ready", "missing"],
+    };
+    const catalog: PluginReferenceCatalog = { plugins: [plugin] };
+    const snapshot = {
+      preferences: { codexSyncMcp: true },
+      mcpServers: {
+        ready: {
+          type: "stdio" as const,
+          command: "private-command",
+          env: { TOKEN: "fixture-secret" },
+        },
+      },
+    };
+    const reference = "[@label](plugin://demo@personal)";
+    const warning = buildNativeCodexPluginReferenceWarning(reference, catalog, snapshot);
+    expect(warning).toContain("missing");
+    expect(warning).toContain("available skills");
+    expect(warning).not.toMatch(/private-command|fixture-secret|\/private\/plugin/u);
+    expect(
+      buildNativeCodexPluginReferenceWarning(
+        "demo@personal plugin://demo@personal",
+        catalog,
+        snapshot,
+      ),
+    ).toBe("");
+    expect(
+      buildNativeCodexPluginReferenceWarning(
+        reference,
+        { plugins: [{ ...plugin, enabled: false }] },
+        snapshot,
+      ),
+    ).toBe("");
+    expect(
+      buildNativeCodexPluginReferenceWarning(
+        reference,
+        { plugins: [{ ...plugin, conflictingPluginIds: ["demo@other"] }] },
+        snapshot,
+      ),
+    ).toBe("");
+    expect(
+      buildNativeCodexPluginReferenceWarning(reference, catalog, {
+        ...snapshot,
+        mcpServers: { ...snapshot.mcpServers, missing: snapshot.mcpServers.ready },
+      }),
+    ).toBe("");
+    const many = {
+      plugins: [
+        {
+          ...plugin,
+          mcpServerNames: Array.from(
+            { length: 200 },
+            (_, i) => `${i}-${"x".repeat(300)}\n<injected>`,
+          ),
+        },
+      ],
+    };
+    const bounded = buildNativeCodexPluginReferenceWarning(reference, many, snapshot);
+    expect(bounded.length).toBeLessThan(2500);
+    expect(bounded).not.toContain("<injected>");
+  });
+  it("refreshes per-skill exclusions without mutating previous turns or discovering when off", async () => {
+    let excluded = ["C:\\Skills\\Same\\SKILL.md"];
+    let sync = true;
+    const discoverSkillPaths = vi.fn(async () => [
+      "c:/skills/same/SKILL.md",
+      "/skills/A/SKILL.md",
+      "/skills/a/SKILL.md",
+    ]);
+    const input = {
+      resolvePreferences: async () => ({
+        preferences: { codexSyncSkills: sync, codexSkillDisabledPaths: excluded },
+      }),
+      discoverMcpServers: vi.fn(),
+      discoverSkillPaths,
+      allowsMcpServer: vi.fn(),
+    };
+    const first = await resolveNativeCodexResourceSnapshot(input);
+    expect(first.skillPaths).toEqual(["/skills/A/SKILL.md", "/skills/a/SKILL.md"]);
+    excluded.push("/skills/A/SKILL.md");
+    expect(first.preferences.codexSkillDisabledPaths).toEqual(["C:\\Skills\\Same\\SKILL.md"]);
+    expect((await resolveNativeCodexResourceSnapshot(input)).skillPaths).toEqual([
+      "/skills/a/SKILL.md",
+    ]);
+    excluded = [];
+    expect((await resolveNativeCodexResourceSnapshot(input)).skillPaths).toHaveLength(3);
+    sync = false;
+    expect((await resolveNativeCodexResourceSnapshot(input)).skillPaths).toBeUndefined();
+    expect(discoverSkillPaths).toHaveBeenCalledTimes(3);
+    const host = await resolveNativeCodexResourceSnapshot({
+      ...input,
+      resolvePreferences: async () => ({
+        preferences: { codexSyncSkills: true, codexSkillDisabledPaths: ["/skills/A/SKILL.md"] },
+        skillPaths: ["/skills/A/SKILL.md", "/skills/a/SKILL.md"],
+      }),
+    });
+    expect(host.skillPaths).toEqual(["/skills/a/SKILL.md"]);
+    expect(discoverSkillPaths).toHaveBeenCalledTimes(3);
+  });
+  it("keeps default/custom sources independent from ZCode discovery", async () => {
+    const discoverMcpServers = vi.fn();
+    const discoverSkillPaths = vi.fn();
+    const allowsMcpServer = vi.fn();
+    const result = await resolveNativeCodexResourceSnapshot({
+      resolvePreferences: async () => ({
+        preferences: {
+          codexMcpConfigPath: "/custom/codex.toml",
+          codexSkillRoots: ["/custom/skills"],
+        },
+      }),
+      discoverMcpServers,
+      discoverSkillPaths,
+      allowsMcpServer,
+    });
+    expect(result).toEqual({
+      preferences: {
+        codexMcpConfigPath: "/custom/codex.toml",
+        codexSkillRoots: ["/custom/skills"],
+      },
+    });
+    expect(discoverMcpServers).not.toHaveBeenCalled();
+    expect(discoverSkillPaths).not.toHaveBeenCalled();
+    expect(allowsMcpServer).not.toHaveBeenCalled();
+  });
+
+  it("rereads preferences each time and filters disabled/untrusted MCP before projection", async () => {
+    let sync = false;
+    const trusted = {
+      type: "stdio" as const,
+      command: "trusted",
+      source: { kind: "user" as const },
+    };
+    const untrusted = {
+      type: "stdio" as const,
+      command: "untrusted",
+      source: { kind: "workspace" as const },
+    };
+    const disabled = { type: "stdio" as const, command: "disabled", enabled: false };
+    const hostMcp = { trusted, untrusted, disabled };
+    const input = {
+      resolvePreferences: async () => ({
+        preferences: { codexSyncMcp: sync, codexSyncSkills: sync },
+        mcpServers: hostMcp,
+      }),
+      discoverMcpServers: vi.fn(async () => hostMcp),
+      discoverSkillPaths: vi.fn(async () => ["/project/.zcode/skills/enabled/SKILL.md"]),
+      allowsMcpServer: vi.fn(async (name: string) => name !== "untrusted"),
+    };
+    const first = await resolveNativeCodexResourceSnapshot(input);
+    sync = true;
+    const second = await resolveNativeCodexResourceSnapshot(input);
+    expect(first).toEqual({ preferences: { codexSyncMcp: false, codexSyncSkills: false } });
+    expect(second.mcpServers).toEqual({ trusted });
+    expect(second.skillPaths).toEqual(["/project/.zcode/skills/enabled/SKILL.md"]);
+    expect(input.discoverMcpServers).toHaveBeenCalledOnce();
+    expect(input.discoverMcpServers).toHaveBeenCalledWith(hostMcp);
+    expect(input.allowsMcpServer.mock.calls.map(([name]) => name)).toEqual([
+      "trusted",
+      "untrusted",
+    ]);
+  });
+
+  it("propagates discovery failure instead of returning stale resources", async () => {
+    await expect(
+      resolveNativeCodexResourceSnapshot({
+        resolvePreferences: async () => ({ preferences: { codexSyncSkills: true } }),
+        discoverMcpServers: vi.fn(),
+        discoverSkillPaths: async () => {
+          throw new Error("skill source unavailable");
+        },
+        allowsMcpServer: vi.fn(),
+      }),
+    ).rejects.toThrow("skill source unavailable");
+  });
+
+  it("filters incompatible and manually excluded definitions after same-name plugin overrides", async () => {
+    let disabledServers = ["manual"];
+    let managed = true;
+    const input = {
+      resolvePreferences: async () => ({
+        preferences: { codexSyncMcp: true, codexMcpDisabledServers: disabledServers },
+      }),
+      discoverMcpServers: async () => ({
+        compatible: { type: "stdio" as const, command: "node" },
+        manual: { type: "stdio" as const, command: "node" },
+        "plugin:image-search:image_search": {
+          type: "http" as const,
+          url: "http://fixture.test",
+          ...(managed ? { auth: { type: "zcode_official", provider: "jwt_token" } as never } : {}),
+        },
+        // This tombstone already overrode a same-name compatible plugin before filtering.
+        overridden: { type: "stdio" as const, command: "zcode-disabled-mcp", enabled: false },
+      }),
+      discoverSkillPaths: vi.fn(),
+      allowsMcpServer: vi.fn(async () => true),
+    };
+    const first = await resolveNativeCodexResourceSnapshot(input);
+    expect(Object.keys(first.mcpServers!)).toEqual(["compatible"]);
+    disabledServers.push("compatible");
+    expect(first.preferences.codexMcpDisabledServers).toEqual(["manual"]);
+    disabledServers = [];
+    managed = false;
+    expect(Object.keys((await resolveNativeCodexResourceSnapshot(input)).mcpServers!)).toEqual([
+      "compatible",
+      "manual",
+      "plugin:image-search:image_search",
+    ]);
+    expect(input.allowsMcpServer.mock.calls).toHaveLength(4);
+  });
+
+  it("keeps the Host's enabled skill paths authoritative across isolated homes", async () => {
+    const discoverSkillPaths = vi.fn(async () => ["/other-home/disabled/SKILL.md"]);
+    const result = await resolveNativeCodexResourceSnapshot({
+      resolvePreferences: async () => ({ preferences: { codexSyncSkills: true }, skillPaths: [] }),
+      discoverMcpServers: vi.fn(),
+      discoverSkillPaths,
+      allowsMcpServer: vi.fn(),
+    });
+    expect(result.skillPaths).toEqual([]);
+    expect(discoverSkillPaths).not.toHaveBeenCalled();
+  });
+});
 
 const workingDirectory = "/workspace/app";
 const testModelSelection = {

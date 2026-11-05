@@ -1,7 +1,14 @@
 import type { ConfigResult } from "@zcode/adapters/config";
+import type { NativeCodexResourceSnapshot } from "@zcode/adapters/native-codex";
 import { GEN_UI_OUTPUT_ROOT_ENV } from "@zcode/shared/node";
+import { getCodexMcpCompatibility, getCodexSkillPathKey } from "@zcode/shared";
 import { resolveInitialModelSelection, type ModelSelectionOptions } from "@zcode/provider";
-import { resolveBashTimeoutPolicy, type AgentProfile, type AgentRuntimeConfig } from "@zcode/core";
+import {
+  extractPluginReferences,
+  resolveBashTimeoutPolicy,
+  type AgentProfile,
+  type AgentRuntimeConfig,
+} from "@zcode/core";
 import { type BuiltInSubagentModelSelectionOverrides } from "@zcode/shared";
 import {
   type CollaborationMode,
@@ -10,7 +17,10 @@ import {
   type HookMatcherConfig,
   type HooksRuntimeConfig,
   type McpServerConfig,
+  type PluginReferenceCatalog,
+  type PluginReferenceCatalogEntry,
 } from "@zcode/contracts";
+import { resolveOfficialPluginHostMcpServerNames } from "./official-plugin-definitions.js";
 import { omitMcpServers, resolveTrustedOfficialCuaServerNames } from "../mcp-config.js";
 import { resolveDefaultEmbeddedSearchBackend } from "./embedded-search-backend.js";
 import { getProjectMemoryRoot } from "./paths.js";
@@ -29,6 +39,114 @@ interface ResolvedAppRuntimeConfig {
 
 interface ResolvedInitialRegistrySelection extends ResolvedRegistrySelection {
   readonly selectionOptions?: ModelSelectionOptions;
+}
+
+const MAX_CODEX_PLUGIN_WARNING_SERVERS = 8;
+const MAX_CODEX_PLUGIN_WARNING_NAME_LENGTH = 128;
+
+/** 配置可投影不等于连接成功；内部 host 依赖必须按可信插件身份识别，不能按显示名猜。 */
+export function getNativeCodexPluginMcpAvailability(
+  plugin: PluginReferenceCatalogEntry,
+  snapshot: NativeCodexResourceSnapshot,
+): { availableServerNames: string[]; unavailableServerNames: string[] } {
+  const availableServerNames = plugin.mcpServerNames.filter((name) => {
+    const config = snapshot.mcpServers?.[name];
+    return (
+      snapshot.preferences.codexSyncMcp &&
+      config &&
+      config.enabled !== false &&
+      !snapshot.preferences.codexMcpDisabledServers?.includes(name) &&
+      getCodexMcpCompatibility(config, name).compatible
+    );
+  });
+  const available = new Set(availableServerNames);
+  return {
+    availableServerNames,
+    unavailableServerNames: [
+      ...new Set([
+        ...plugin.mcpServerNames.filter((name) => !available.has(name)),
+        ...resolveOfficialPluginHostMcpServerNames(plugin.pluginId),
+      ]),
+    ],
+  };
+}
+
+export function describeNativeCodexPluginMcpNames(names: readonly string[]): string {
+  const summary = names
+    .slice(0, MAX_CODEX_PLUGIN_WARNING_SERVERS)
+    .map((name) => name.replace(/[\p{Cc}<>]/gu, "?").slice(0, MAX_CODEX_PLUGIN_WARNING_NAME_LENGTH))
+    .join(", ");
+  const remaining = names.length - MAX_CODEX_PLUGIN_WARNING_SERVERS;
+  return remaining > 0 ? `${summary} … (+${remaining})` : summary;
+}
+
+/** 与 picker 使用同一快照；只补充缺失事实，不把引用变成启用 MCP 或新增权限。 */
+export function buildNativeCodexPluginReferenceWarning(
+  input: string,
+  catalog: PluginReferenceCatalog,
+  snapshot: NativeCodexResourceSnapshot,
+): string {
+  const references = new Set(extractPluginReferences(input).references);
+  const unavailable = catalog.plugins
+    .filter(
+      (plugin) =>
+        references.has(plugin.pluginId) && plugin.enabled && !plugin.conflictingPluginIds.length,
+    )
+    .flatMap((plugin) => {
+      const { unavailableServerNames } = getNativeCodexPluginMcpAvailability(plugin, snapshot);
+      return unavailableServerNames.length
+        ? [
+            {
+              pluginId: plugin.pluginId,
+              unavailableMcpServers: describeNativeCodexPluginMcpNames(unavailableServerNames),
+            },
+          ]
+        : [];
+    });
+  if (!unavailable.length) return "";
+  return `The user may select and invoke these packages using available skills and exposed tools. These MCP dependencies are unavailable through ZCode synchronization for this turn: ${JSON.stringify(unavailable)}. If the requested action needs a missing dependency, explain its name and the limitation. Do not invent tools, enable excluded MCP servers, or treat a package reference as additional permission.`;
+}
+
+/** 每轮只投影当前选择的资源；未启用同步时不能触碰 ZCode 配置或复用上轮快照。 */
+export async function resolveNativeCodexResourceSnapshot(input: {
+  resolvePreferences?: () => Promise<NativeCodexResourceSnapshot>;
+  discoverMcpServers: (
+    hostServers?: Record<string, McpServerConfig>,
+  ) => Promise<Record<string, McpServerConfig>>;
+  discoverSkillPaths: () => Promise<string[]>;
+  allowsMcpServer: (name: string, config: McpServerConfig) => Promise<boolean>;
+}): Promise<NativeCodexResourceSnapshot> {
+  const source = await input.resolvePreferences?.();
+  const preferences = { ...source?.preferences };
+  if (preferences.codexSkillRoots) preferences.codexSkillRoots = [...preferences.codexSkillRoots];
+  if (preferences.codexSkillDisabledPaths)
+    preferences.codexSkillDisabledPaths = [...preferences.codexSkillDisabledPaths];
+  if (preferences.codexMcpDisabledServers)
+    preferences.codexMcpDisabledServers = [...preferences.codexMcpDisabledServers];
+  const snapshot: NativeCodexResourceSnapshot = { preferences };
+  if (preferences.codexSyncMcp) {
+    snapshot.mcpServers = {};
+    const configured = await input.discoverMcpServers(source?.mcpServers);
+    for (const [name, config] of Object.entries(configured)) {
+      // disabled 的同名用户配置先覆盖插件再过滤，不能删掉后让插件条目复活。
+      if (
+        config.enabled !== false &&
+        !preferences.codexMcpDisabledServers?.includes(name) &&
+        getCodexMcpCompatibility(config, name).compatible &&
+        (await input.allowsMcpServer(name, config))
+      ) {
+        snapshot.mcpServers[name] = structuredClone(config);
+      }
+    }
+  }
+  if (preferences.codexSyncSkills) {
+    // Host 技能目录与 CLI HOME 可能不同；已给出清单时不能并入另一目录而复活停用项。
+    const excluded = new Set(preferences.codexSkillDisabledPaths?.map(getCodexSkillPathKey));
+    snapshot.skillPaths = [
+      ...new Set(source?.skillPaths ?? (await input.discoverSkillPaths())),
+    ].filter((path) => !excluded.has(getCodexSkillPathKey(path)));
+  }
+  return snapshot;
 }
 
 export function resolveAppRuntimeConfig(input: {

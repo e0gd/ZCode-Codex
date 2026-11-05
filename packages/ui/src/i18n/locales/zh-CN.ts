@@ -15,8 +15,7 @@ const zhCN: Record<string, string> = {
   "settings.codexSubscription.logout": "退出登录",
   "settings.codexSubscription.cancel": "取消登录",
   "settings.codexSubscription.refresh": "刷新状态",
-  "settings.codexSubscription.error":
-    "无法完成订阅操作。请检查电脑端 Codex 和网络连接后重试。",
+  "settings.codexSubscription.error": "无法完成订阅操作。请检查电脑端 Codex 和网络连接后重试。",
   "settings.codexSubscription.deviceErrorDesktop":
     "无法获取官方设备授权码。请改用“通过浏览器登录 ChatGPT”，并检查网络及账号是否允许设备码登录。",
   "settings.codexSubscription.deviceErrorWeb":
@@ -4823,6 +4822,67 @@ const zhCN: Record<string, string> = {
   "settings.codex.autoSubagentsScope":
     "此电脑的全局默认设置，仅影响 Codex。下一轮对话生效，连接此电脑的网页／手机会话同样适用。",
   "settings.codex.saveFailed": "保存失败，请重试。",
+  "settings.codex.resources.title": "Codex 集成",
+  "settings.codex.resources.description":
+    "选择 Codex 使用的 MCP 和技能来源。MCP 与技能可分别跟随 ZCode，或使用 Codex 自己的配置。",
+  "settings.codex.resources.mcpSync": "MCP 与 ZCode 同步",
+  "settings.codex.resources.mcpSyncDescription":
+    "选择交给 Codex 的外部 MCP。兼容且已启用的项目默认开启，不兼容的项目自动关闭；Codex 独立 MCP 暂不使用。",
+  "settings.codex.resources.mcpList": "同步的 MCP",
+  "settings.codex.resources.mcpListDescription":
+    "兼容性只检查配置，不代表已连接成功。这里的选择只影响 Codex，不会更改 ZCode 的 MCP 启用状态。",
+  "settings.codex.resources.mcpRefresh": "刷新列表",
+  "settings.codex.resources.mcpLoading": "正在读取执行电脑上的 MCP 列表…",
+  "settings.codex.resources.mcpUnavailable": "请选择已连接的工作区后查看 MCP 列表。",
+  "settings.codex.resources.mcpLoadFailed":
+    "无法读取 MCP 列表，请检查工作区连接后重试。已保存的选择未更改。",
+  "settings.codex.resources.mcpRetry": "重试",
+  "settings.codex.resources.mcpEmpty": "当前工作区没有可显示的 MCP。",
+  "settings.codex.resources.mcpSelect": "将 {name} 同步到 Codex",
+  "settings.codex.resources.mcpReason.compatible": "配置兼容，可同步",
+  "settings.codex.resources.mcpReason.sse":
+    "不兼容：Codex 不支持 SSE，请使用 Streamable HTTP 或 stdio。",
+  "settings.codex.resources.mcpReason.managed_auth":
+    "不兼容：依赖 ZCode 管理的认证，暂不能交给 Codex。",
+  "settings.codex.resources.mcpReason.oauth": "不兼容：此 OAuth 配置暂不能交给 Codex。",
+  "settings.codex.resources.mcpReason.fixed_protocol": "不兼容：固定协议版本，请改用自动协商。",
+  "settings.codex.resources.mcpReason.unsupported_transport": "不兼容：不支持此连接方式。",
+  "settings.codex.resources.mcpReason.invalid_config": "不兼容：连接配置不完整或无效。",
+  "settings.codex.resources.mcpReason.internal_tool": "不参与同步：这是 ZCode 内部宿主工具。",
+  "settings.codex.resources.mcpReason.disabled": "ZCode 中已停用，不参与同步。",
+  "settings.codex.resources.mcpReason.untrusted": "工作区尚未信任此 MCP，不参与同步。",
+  "settings.codex.resources.mcpPath": "Codex MCP 配置文件",
+  "settings.codex.resources.mcpPathDescription":
+    "填写执行电脑上的绝对文件路径，只读取 TOML 中的 mcp_servers 配置。留空使用内置 Codex 隔离配置目录中的 config.toml。",
+  "settings.codex.resources.defaultPath": "留空使用内置 Codex 默认配置",
+  "settings.codex.resources.skillsSync": "技能与 ZCode 同步",
+  "settings.codex.resources.skillList": "同步的技能",
+  "settings.codex.resources.skillListDescription":
+    "选择交给 Codex 的技能，只影响同步，不会更改 ZCode 的技能启用状态。同步不保证技能所需的工具可用；Codex 自带的系统技能由 Codex 管理。",
+  "settings.codex.resources.skillRefresh": "刷新列表",
+  "settings.codex.resources.skillLoading": "正在读取执行电脑上的技能列表…",
+  "settings.codex.resources.skillUnavailable": "请选择已连接的工作区后查看技能列表。",
+  "settings.codex.resources.skillLoadFailed":
+    "无法读取技能列表，请检查工作区连接后重试。已保存的选择未更改。",
+  "settings.codex.resources.skillRetry": "重试",
+  "settings.codex.resources.skillEmpty": "当前工作区没有可显示的技能。",
+  "settings.codex.resources.skillSelect": "将 {name}（{path}）同步到 Codex",
+  "settings.codex.resources.skillScope.workspace": "工作区技能",
+  "settings.codex.resources.skillScope.user": "用户技能",
+  "settings.codex.resources.skillScope.plugin": "插件技能",
+  "settings.codex.resources.skillDisabled": "ZCode 中已停用，不参与同步。",
+  "settings.codex.resources.skillsSyncDescription":
+    "让 Codex 使用 ZCode 已启用的技能，保留技能的停用状态。同步时忽略下方自定义目录。",
+  "settings.codex.resources.skillRoots": "Codex 额外技能目录",
+  "settings.codex.resources.skillRootsDescription":
+    "每行一个执行电脑上的绝对目录，最多 32 个，每项不超过 4096 字符。留空保留 Codex 默认技能发现；填写时扩展默认目录。",
+  "settings.codex.resources.defaultSkills": "留空使用 Codex 默认技能目录",
+  "settings.codex.resources.scope":
+    "保存后从下一轮生效，连接此电脑的网页／手机会话同样适用。同步不会复制或覆盖配置和技能文件；关闭同步后恢复使用保存的路径。",
+  "settings.codex.resources.invalidSkills": "技能目录最多 32 个，每项不能超过 4096 字符。",
+  "settings.codex.resources.saveFailed":
+    "保存失败，请检查路径是否为绝对路径并重试。你的输入已保留。",
+  "settings.codex.resources.saved": "已保存，从下一轮对话生效。",
   "settings.subagents.filter.enabled": "已启用",
   "settings.subagents.filter.disabled": "已停用",
   "settings.subagents.table.name": "名称",

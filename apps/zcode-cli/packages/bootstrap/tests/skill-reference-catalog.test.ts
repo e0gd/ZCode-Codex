@@ -3,7 +3,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { zcodeSkillsReferenceCatalogResultSchema } from "@zcode/shared";
 import type { SkillLoadOutcome } from "@zcode/contracts";
 import { getSkillReferenceCatalog } from "../src/zcode-protocol/skill-reference-catalog.js";
@@ -43,6 +43,55 @@ function contextWithSession(sessionId: string): ZCodeProtocolAgentServerContext 
 }
 
 describe("skills/referenceCatalog protocol", () => {
+  it("shows only current selected Codex skills and keeps same-name paths independent", async () => {
+    const context = contextWithSession("codex-session");
+    const app = context.sessions.get("codex-session")!.app;
+    const identity = {
+      ...SESSION_CATALOG,
+      skills: [
+        ...SESSION_CATALOG.skills,
+        { ...SESSION_CATALOG.skills[0]!, path: "/other/frozen/SKILL.md" },
+      ],
+    };
+    app.runtime = { nativeTurnExecutor: {} } as never;
+    app.getSkillCatalog = async () => identity;
+    let selected = ["/other/frozen/SKILL.md"];
+    app.getNativeCodexResourceSnapshot = vi.fn(async () => ({
+      preferences: { codexSyncSkills: true },
+      skillPaths: selected,
+    }));
+    const params = {
+      workspace: { workspacePath: "/workspace", workspaceKey: "/workspace" },
+      sessionId: "codex-session",
+    };
+    expect(
+      (await getSkillReferenceCatalog(context, params)).skills.map((skill) => skill.path),
+    ).toEqual(selected);
+    selected = [];
+    expect((await getSkillReferenceCatalog(context, params)).skills).toEqual([]);
+    expect(identity.skills).toHaveLength(2);
+    app.getNativeCodexResourceSnapshot = vi.fn(async () => ({
+      preferences: { codexSyncSkills: false },
+      skillPaths: [SESSION_CATALOG.skills[0]!.path],
+    }));
+    expect((await getSkillReferenceCatalog(context, params)).skills).toEqual([]);
+  });
+
+  it("fails visibly for Codex selection discovery instead of returning an unfiltered skill list", async () => {
+    const context = contextWithSession("codex-session");
+    const app = context.sessions.get("codex-session")!.app;
+    app.runtime = { nativeTurnExecutor: {} } as never;
+    app.getNativeCodexResourceSnapshot = vi.fn(async () => {
+      throw new Error("resource-selection-unavailable");
+    });
+    await expect(
+      getSkillReferenceCatalog(context, {
+        workspace: { workspacePath: "/workspace", workspaceKey: "/workspace" },
+        sessionId: "codex-session",
+      }),
+    ).rejects.toThrow("resource-selection-unavailable");
+  });
+
   it("serves the Session runtime frozen catalog", async () => {
     const result = await getSkillReferenceCatalog(contextWithSession("session-a"), {
       workspace: { workspacePath: "/workspace", workspaceKey: "/workspace" },

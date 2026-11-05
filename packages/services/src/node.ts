@@ -43,6 +43,7 @@ import {
 } from "./onboarding/localUsageEvidence.js";
 import {
   buildLocalMediaPreviewUrl,
+  getCodexSkillPathKey,
   type DynamicWorkflowMode,
   type ProviderProvisioningSourceTrigger,
 } from "@zcode/shared";
@@ -510,7 +511,10 @@ import { IClientConfigService } from "./client-config/clientConfig.js";
 import { createClientScenesService } from "./client-scenes/clientScenesService.js";
 import { createSkillsService } from "./skills/skillsService.js";
 import { createSkillSyncService } from "./skill-sync/skillSyncService.js";
-import { createMcpSyncService } from "./mcp-sync/mcpSyncService.js";
+import {
+  createMcpSyncService,
+  createCodexMcpDirectorySnapshot,
+} from "./mcp-sync/mcpSyncService.js";
 import {
   IPluginUiAppToolsService,
   IPluginUiSamplingService,
@@ -2456,9 +2460,40 @@ export function createLocalServices(options: {
       ? { sessionRuntimePreferencesAuthority: "external" as const }
       : {
           sessionRuntimePreferencesAuthority: "local" as const,
-          resolveSessionRuntimePreferences: async (scope) => {
+          resolveSessionRuntimePreferences: async (scope, workspace) => {
             // 预算已统一，不能把可选远端配置作为本地/手机 shared-host 建会话的前置条件。
             const settings = await settingService.get();
+            // 同步读取设置页的目录 owner，不能让隔离 CLI HOME 或旧 session/create 快照
+            // 覆盖用户刚保存的 MCP；保留停用项，交给 CLI 沿用项目信任和插件覆盖规则。
+            const codexMcpServers =
+              scope === "native-codex-resources" && settings.codexSyncMcp === true
+                ? createCodexMcpDirectorySnapshot(
+                    (
+                      await mcpSyncService.loadMcpFromUserDirectory({
+                        workspacePath: workspace.workspacePath,
+                      })
+                    ).servers,
+                    settings.codexMcpDisabledServers ?? [],
+                  ).mcpServers
+                : undefined;
+            const disabledCodexSkillPaths = new Set(
+              (settings.codexSkillDisabledPaths ?? []).map(getCodexSkillPathKey),
+            );
+            const codexSkillPaths =
+              scope === "native-codex-resources" && settings.codexSyncSkills === true
+                ? (
+                    await skillsService.list({
+                      workspacePath: workspace.workspacePath,
+                      workspaceIdentity: workspace.workspaceIdentity,
+                    })
+                  ).skills
+                    .filter(
+                      (skill) =>
+                        skill.enabled !== false &&
+                        !disabledCodexSkillPaths.has(getCodexSkillPathKey(skill.path)),
+                    )
+                    .map((skill) => skill.path)
+                : undefined;
             const modelContextBudgetStrategy = DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY;
             return {
               askUserQuestionAutoResolutionEnabled:
@@ -2467,6 +2502,14 @@ export function createLocalServices(options: {
               toolSearchMode: settings.toolSearchMode ?? "off",
               memoryEnabled: settings.memoryEnabled === true,
               codexAutoSubagentsEnabled: settings.codexAutoSubagentsEnabled === true,
+              codexMcpConfigPath: settings.codexMcpConfigPath ?? "",
+              codexSkillRoots: settings.codexSkillRoots ?? [],
+              codexSyncMcp: settings.codexSyncMcp === true,
+              codexMcpDisabledServers: settings.codexMcpDisabledServers ?? [],
+              codexSyncSkills: settings.codexSyncSkills === true,
+              codexSkillDisabledPaths: settings.codexSkillDisabledPaths ?? [],
+              ...(codexMcpServers ? { codexMcpServers } : {}),
+              ...(codexSkillPaths ? { codexSkillPaths } : {}),
               modelContextBudgetStrategy,
               // user-execution 只消费 Shell；共享默认策略是统一 result schema 的兼容占位，
               // 不会覆盖 runtime-materialization 阶段已经固定的 strategy。

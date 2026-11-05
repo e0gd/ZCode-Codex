@@ -32,6 +32,13 @@ export { conversationQuoteSchema, conversationQuotesSchema } from "../conversati
 // 上述旧协议 client/server 组删除时，本文件整体删除。
 // 注：外部零消费 schema 多为存活 schema 联合的内部依赖，随宿主文件一起处理，勿单删。
 import { z } from "zod";
+import {
+  codexResourcePathSchema,
+  codexSkillRootsSchema,
+  codexSkillDisabledPathsSchema,
+  codexMcpDisabledServersSchema,
+  codexMcpSyncCandidateSchema,
+} from "../app-runtime-preferences.js";
 import { accountProviderUnavailableReasonSchema } from "../account-provider-state.js";
 import { bashOutputDisplaySchema } from "../bash-output-display.js";
 import { zcodeAutomationBotDeliveryTargetSchema } from "../bots.js";
@@ -895,6 +902,7 @@ export const zcodeMcpListParamsSchema = z
 export const zcodeMcpListResultSchema = z
   .object({
     statuses: z.record(z.string(), zcodeMcpServerStatusSnapshotSchema),
+    codexSyncCandidates: z.array(codexMcpSyncCandidateSchema).optional(),
   })
   .strict();
 export type ZCodeMcpListResult = z.infer<typeof zcodeMcpListResultSchema>;
@@ -2104,6 +2112,7 @@ export type ZCodeSessionEventsParams = z.infer<typeof zcodeSessionEventsParamsSc
 export const zcodeSessionRuntimePreferencesScopeSchema = z.enum([
   "runtime-materialization",
   "user-execution",
+  "native-codex-resources",
 ]);
 export type ZCodeSessionRuntimePreferencesScope = z.infer<
   typeof zcodeSessionRuntimePreferencesScopeSchema
@@ -2144,6 +2153,24 @@ export const zcodeSessionRuntimePreferencesResultSchema = z
     // Host 按任务项目归属派生；旧 Host 省略时使用 ZCode 默认引擎。
     executionEngine: z.enum(["zcode", "codex"]).optional(),
     codexAutoSubagentsEnabled: z.boolean().optional(),
+    codexMcpConfigPath: codexResourcePathSchema.optional(),
+    codexSkillRoots: codexSkillRootsSchema.optional(),
+    codexSyncMcp: z.boolean().optional(),
+    codexMcpDisabledServers: codexMcpDisabledServersSchema.optional(),
+    codexSyncSkills: z.boolean().optional(),
+    codexSkillDisabledPaths: codexSkillDisabledPathsSchema.optional(),
+    // 仅执行 Host→CLI；保留停用项以覆盖同名插件，绝不进入 AppSettings 或 UI 广播。
+    codexMcpServers: z
+      .array(
+        z
+          .object({
+            server: zcodeProtocolMcpServerSchema,
+            enabled: z.boolean(),
+          })
+          .strict(),
+      )
+      .optional(),
+    codexSkillPaths: z.array(codexResourcePathSchema.refine((path) => path.length > 0)).optional(),
     additionalDirectories: z.array(nonEmptyString).max(256).optional(),
     nativeSearchEnhancementsEnabled: z.boolean(),
     toolSearchMode: appToolSearchModeSchema.default("off"),
@@ -4245,43 +4272,101 @@ export const sessionLifecycleSnapshotSchema = z
 export const sessionLifecycleResultSchema = z.object({ completed: z.literal(true) }).strict();
 
 // Only safe account/catalog projections cross the Host boundary; credentials remain in Codex.
-export const codexSubscriptionModelSchema = z.object({
-  id: z.string().min(1), model: z.string().min(1), displayName: z.string(),
-  supportedReasoningEfforts: z.array(z.object({ reasoningEffort: z.string().min(1), description: z.string() }).strict()),
-  defaultReasoningEffort: z.string(), inputModalities: z.array(z.string()),
-}).strict();
-export const codexAccountCommandSchema = z.object({
-  action: z.enum(["read", "refresh", "login", "cancel", "logout"]),
-  loginId: z.string().min(1).optional(),
-  loginMethod: z.enum(["browser", "device-code"]).optional(),
-}).strict();
+export const codexSubscriptionModelSchema = z
+  .object({
+    id: z.string().min(1),
+    model: z.string().min(1),
+    displayName: z.string(),
+    supportedReasoningEfforts: z.array(
+      z.object({ reasoningEffort: z.string().min(1), description: z.string() }).strict(),
+    ),
+    defaultReasoningEffort: z.string(),
+    inputModalities: z.array(z.string()),
+  })
+  .strict();
+export const codexAccountCommandSchema = z
+  .object({
+    action: z.enum(["read", "refresh", "login", "cancel", "logout"]),
+    loginId: z.string().min(1).optional(),
+    loginMethod: z.enum(["browser", "device-code"]).optional(),
+  })
+  .strict();
 // 官方浏览器登录依赖本机回调；校验返回值后原样转交，不接受任意网页或远程 redirect。
-export const codexBrowserAuthorizationUrlSchema = z.string().max(8192).url().refine((value) => {
-  try {
-    const url = new URL(value);
-    if (url.protocol !== "https:" || url.hostname !== "auth.openai.com" || url.port || url.username || url.password || url.hash || url.pathname !== "/oauth/authorize") return false;
-    const params = url.searchParams;
-    for (const name of ["redirect_uri", "response_type", "state", "code_challenge", "code_challenge_method"]) {
-      if (params.getAll(name).length !== 1) return false;
+export const codexBrowserAuthorizationUrlSchema = z
+  .string()
+  .max(8192)
+  .url()
+  .refine((value) => {
+    try {
+      const url = new URL(value);
+      if (
+        url.protocol !== "https:" ||
+        url.hostname !== "auth.openai.com" ||
+        url.port ||
+        url.username ||
+        url.password ||
+        url.hash ||
+        url.pathname !== "/oauth/authorize"
+      )
+        return false;
+      const params = url.searchParams;
+      for (const name of [
+        "redirect_uri",
+        "response_type",
+        "state",
+        "code_challenge",
+        "code_challenge_method",
+      ]) {
+        if (params.getAll(name).length !== 1) return false;
+      }
+      const redirect = new URL(params.get("redirect_uri") ?? "");
+      return (
+        redirect.protocol === "http:" &&
+        ["localhost", "127.0.0.1", "[::1]"].includes(redirect.hostname) &&
+        redirect.port !== "" &&
+        redirect.pathname === "/auth/callback" &&
+        !redirect.username &&
+        !redirect.password &&
+        !redirect.search &&
+        !redirect.hash &&
+        params.get("response_type") === "code" &&
+        params.get("code_challenge_method") === "S256" &&
+        /^[A-Za-z0-9_-]{43}$/.test(params.get("code_challenge") ?? "") &&
+        (params.get("state")?.trim().length ?? 0) > 0 &&
+        (params.get("state")?.length ?? 0) <= 1024
+      );
+    } catch {
+      return false;
     }
-    const redirect = new URL(params.get("redirect_uri") ?? "");
-    return redirect.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(redirect.hostname)
-      && redirect.port !== "" && redirect.pathname === "/auth/callback" && !redirect.username && !redirect.password && !redirect.search && !redirect.hash
-      && params.get("response_type") === "code" && params.get("code_challenge_method") === "S256"
-      && /^[A-Za-z0-9_-]{43}$/.test(params.get("code_challenge") ?? "")
-      && (params.get("state")?.trim().length ?? 0) > 0 && (params.get("state")?.length ?? 0) <= 1024;
-  } catch { return false; }
-});
-export const codexAccountStateSchema = z.object({
-  status: z.enum(["signed-out", "logging-in", "signed-in", "error"]),
-  account: z.object({ email: z.string(), planType: z.string() }).strict().optional(),
-  login: z.union([
-    z.object({ loginId: z.string().min(1), type: z.literal("device-code").optional(), verificationUrl: z.string().url(), userCode: z.string().min(1) }).strict(),
-    z.object({ loginId: z.string().min(1), type: z.literal("browser"), authorizationUrl: codexBrowserAuthorizationUrlSchema }).strict(),
-  ]).optional(),
-  models: z.array(codexSubscriptionModelSchema), error: z.string().optional(),
-  errorCode: z.literal("device-auth-unavailable").optional(),
-}).strict();
+  });
+export const codexAccountStateSchema = z
+  .object({
+    status: z.enum(["signed-out", "logging-in", "signed-in", "error"]),
+    account: z.object({ email: z.string(), planType: z.string() }).strict().optional(),
+    login: z
+      .union([
+        z
+          .object({
+            loginId: z.string().min(1),
+            type: z.literal("device-code").optional(),
+            verificationUrl: z.string().url(),
+            userCode: z.string().min(1),
+          })
+          .strict(),
+        z
+          .object({
+            loginId: z.string().min(1),
+            type: z.literal("browser"),
+            authorizationUrl: codexBrowserAuthorizationUrlSchema,
+          })
+          .strict(),
+      ])
+      .optional(),
+    models: z.array(codexSubscriptionModelSchema),
+    error: z.string().optional(),
+    errorCode: z.literal("device-auth-unavailable").optional(),
+  })
+  .strict();
 export type CodexSubscriptionModel = z.infer<typeof codexSubscriptionModelSchema>;
 export type CodexAccountCommand = z.infer<typeof codexAccountCommandSchema>;
 export type CodexAccountState = z.infer<typeof codexAccountStateSchema>;

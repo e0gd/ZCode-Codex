@@ -1,5 +1,38 @@
 # Tool Change Chain Spec
 
+Native package MCP warnings parse Core's persisted canonicalInput, separately from expanded model text. Model-only continuations pass an empty canonicalInput, so slash-command templates and internal continuations do not acquire user-reference meaning. The optional field is internal to the native execution port; no desktop/Web wire schema changes.
+
+Codex conversation plugin/skill pickers read the same next-turn resource snapshot as native execution. Session engine identity, selected compatible trusted MCP names and selected canonical skill paths determine the read-only catalog; normal ZCode catalogs retain existing behavior. Enabled packages with MCP dependencies remain selectable when their MCP is unavailable: a localized warning names missing servers through existing description fields, preserving old strict Web/mobile clients. Official host dependencies use exact plugin identity. Available MCP/skill arrays still contain only selected resources; unavailable/disabled/untrusted MCP is never enabled by selecting a package, and plugin conflicts still block selection. The native resolver receives canonical input and supplies a bounded model-only warning for valid referenced packages from that same turn snapshot through additionalContext, refreshed/cleared every turn. No tool schema, permission, canonical message or source configuration changes. Codex skill discovery must not initialize the ZCode Core context or connect MCP servers. Unbound drafts retain workspace catalogs until a session supplies authoritative engine identity; query failures never fall back to an unfiltered Codex catalog. Acceptance covers all/partially missing MCP, internal node_repl, sync-off and next-turn changes, strict result compatibility, normal ZCode, and selectable warning entries through actual @/+ browser menus.
+
+Codex skill synchronization now stores manual path exclusions in `codexSkillDisabledPaths`.
+Host metadata list → persisted settings → existing per-turn resource snapshot →
+shared path-identity filter → native skill projection is the single selection path.
+Excluded paths are removed before file reads, and synchronization off retains but
+ignores exclusions. Codex conversation plugin/skill catalogs intersect the same
+current selected resource snapshot without connecting MCP or running inference;
+normal ZCode catalogs are unchanged. Plugin identity/conflict/provenance and the
+existing desktop/mobile Host attachment remain authoritative. See the root
+`docs/specs/codex-resources.md` for selection and draft/session boundaries.
+
+Codex MCP sync uses the shared pure compatibility classifier for read-only `mcp/list`
+catalog metadata and next-turn selection. Compatible enabled/trusted definitions
+default on; `codexMcpDisabledServers` stores only manual opt-outs. Incompatible
+definitions are displayed off with static reason codes and omitted before native
+translation; disabled same-name overrides remain tombstones until after plugin
+merging. Catalog discovery never connects servers or exposes configuration values.
+
+Native Codex MCP sync diagnostics retain the server name through Host preflight and adapter translation, with separate static reasons for transport, authentication, protocol version and invalid configuration. No credential/configuration payload is added to the existing error event; desktop and mobile receive the same failure through the current turn-error path.
+
+Native Codex notification delivery uses one per-turn admission budget (1024 pending notifications / 32 MiB UTF-8 JSON), shared by pre-start buffering and live serial handling. Budget exhaustion explicitly fails and closes the native connection without replaying tools, changing provider selection, discarding admitted facts silently, or clearing receipts. Core remains the sole persistence/projection owner for desktop and mobile.
+
+## Native Codex crash lock recovery (2026-11-04)
+
+Existing Core admission → adapter session lock → owner/child process verification → existing receipt and official thread resume. Only a valid new ownership record with every recorded process proven absent permits stale recovery; legacy, uncertain-spawn and live-child locks remain blocked for inspection. No execution replay, tool schema, model selection or desktop/mobile projection change is introduced. See the native executor process-lock recovery contract.
+
+## Native Codex MCP and skill source selection (2026-11-04)
+
+Existing settings owner → per-turn Host runtime-preference request → bootstrap effective MCP/skill discovery and existing workspace-MCP trust gate → immutable native-resource snapshot → official Codex invocation configuration → unchanged native execution/projection. Synchronization is a runtime view, not a second configuration store. Disabled/untrusted MCP definitions never become executable through translation; disabled skills are omitted from the selected paths. Custom sources and sync remain separate choices, and selecting either cannot grant trust or override model/auth/permission settings. Desktop continuous and mobile replayable use the same executing Host and next-turn preferences. Source files and credentials are not rewritten. Regression covers default/off no-discovery behavior, same-session next-turn refresh, trusted source precedence, disabled resources, and discovery failures. See [native resource sources](../native-codex-executor.md#mcp-and-skill-sources-2026-11-04).
+
 ## Native Codex browser ChatGPT login (2026-11-04)
 
 Explicit local desktop browser-login or Web device-code action → existing settings Host/CLI account command → official Codex account/login/start → validated pending authorization projection → explicit user open/complete or existing cancel/timeout → official account/catalog refresh. This uses the same single account controller and no task/tool execution. Device authorization failures have a fixed safe category; successful binary discovery must not be confused with endpoint availability. Legacy device requests and the existing desktop-continuous/mobile-replayable ownership stay compatible. See [subscription browser authorization](../../../../../../docs/specs/codex-chatgpt-subscription.md#desktop-browser-authorization-and-device-code-failures-2026-11-04).

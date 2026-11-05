@@ -10,7 +10,7 @@ import { createRootTraceContext } from "@zcode/contracts";
 const mock = vi.hoisted(() => ({ spawn: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawn: mock.spawn }));
 import { NativeCodexExecutor, createNativeCodexExecutor, createNativeCodexExecutorFromEnv, discoverNativeCodexBinary } from "../src/native-codex/index.js";
-import { NativeChildObserver, nativeToolInput, nativeToolName, nativeToolOutput } from "../src/native-codex/connection.js";
+import { CodexConnection, NativeChildObserver, nativeToolInput, nativeToolName, nativeToolOutput } from "../src/native-codex/connection.js";
 
 type Message = { id?: string | number; method?: string; params?: Record<string, unknown>; result?: unknown; error?: unknown };
 const roots: string[] = [];
@@ -67,6 +67,110 @@ function input(overrides: Partial<Parameters<NativeCodexExecutor["execute"]>[0]>
     requestUserInput: vi.fn(async () => ({} as Record<string, string>)), ...overrides };
 }
 const activeParams = { threadId: "thread-1", turnId: "turn-1" };
+
+describe("native notification backlog", () => {
+  it("stops parsing the current stdout chunk when the consumer closes the connection", () => {
+    const remote = server();
+    let connection!: CodexConnection;
+    const onMessage = vi.fn(() => connection.close());
+    connection = new CodexConnection({ binaryPath: "fixture", args: ['model_provider="fixture"'], cwd: tmpdir(), env: {}, onMessage, onFailure: vi.fn() });
+    remote.children[0]!.stdout.write(Array.from({ length: 8 }, () => JSON.stringify({ method: "ignored", params: {} })).join("\n") + "\n");
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(remote.children[0]!.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases the budget as notifications settle instead of limiting total turn events", async () => {
+    const remote = server((message, emit) => {
+      if (message.method !== "turn/start") return false;
+      emit({ id: message.id, result: { turn: { id: "turn-1" } } });
+      void (async () => {
+        for (let batch = 0; batch < 4; batch++) {
+          await new Promise<void>(resolve => setImmediate(resolve));
+          for (let index = 0; index < 300; index++) emit({ method: "ignored", params: {} });
+        }
+        emit({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed" } } });
+      })();
+      return true;
+    });
+    const { executor } = await fixture();
+    await expect(executor.execute(input())).resolves.toMatchObject({ threadId: "thread-1" });
+    expect(remote.calls.filter(call => call.method === "turn/start")).toHaveLength(1);
+  });
+
+  it.each(["count", "bytes"])("fails closed when the pre-start %s budget is exceeded", async (kind) => {
+    const remote = server((message, emit) => {
+      if (message.method !== "turn/start") return false;
+      const count = kind === "count" ? 1025 : 17;
+      const delta = kind === "bytes" ? "x".repeat(2 * 1024 * 1024) : "x";
+      for (let index = 0; index < count; index++) emit({ method: "ignored", params: { delta } });
+      emit({ id: message.id, result: { turn: { id: "turn-1" } } });
+      emit({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed" } } });
+      return true;
+    });
+    const { executor } = await fixture();
+    await expect(executor.execute(input())).rejects.toMatchObject({ code: "NATIVE_CODEX_EVENT_BACKLOG_LIMIT" });
+    expect(remote.children[0]!.kill).toHaveBeenCalled();
+    expect(remote.calls.filter(call => call.method === "turn/start")).toHaveLength(1);
+  });
+
+  it("bounds notifications queued behind a blocked live consumer", async () => {
+    let flood!: () => void;
+    const remote = server((message, emit) => {
+      if (message.method !== "turn/start") return false;
+      emit({ id: message.id, result: { turn: { id: "turn-1" } } });
+      flood = () => { for (let index = 0; index < 1025; index++) emit({ method: "ignored", params: {} }); };
+      setImmediate(() => emit({ method: "item/agentMessage/delta", params: { ...activeParams, itemId: "message", delta: "hello" } }));
+      return true;
+    });
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const { executor } = await fixture();
+    const running = executor.execute(input({ onEvent: async () => { flood(); await blocked; } }));
+    await expect(running).rejects.toMatchObject({ code: "NATIVE_CODEX_EVENT_BACKLOG_LIMIT" });
+    release();
+    expect(remote.children[0]!.kill).toHaveBeenCalled();
+  });
+});
+
+describe("native resource preference refresh", () => {
+  it("reads each turn and drops sync/custom configuration when returning to defaults on the same thread", async () => {
+    const { options } = await fixture();
+    const customFile = join(options.codexHome, "custom.toml");
+    await writeFile(customFile, '[mcp_servers.custom]\ncommand="node"\nargs=["custom.js"]\n');
+    const skillDirectory = join(options.codexHome, "fixture-skill"); await mkdir(skillDirectory);
+    const skill = join(skillDirectory, "SKILL.md"); await writeFile(skill, "---\nname: fixture\ndescription: Fixture\n---\nFixture");
+    const rpc = server((message, emit) => {
+      if (message.method === "config/read") { emit({ id: message.id, result: { config: { mcp_servers: { native: { command: "native" } } } } }); return true; }
+      if (message.method === "skills/extraRoots/set") { emit({ id: message.id, result: {} }); return true; }
+      if (message.method === "skills/list") { emit({ id: message.id, result: { data: [{ skills: [{ path: skill, scope: "user" }, { path: join(options.codexHome, "disabled", "SKILL.md"), scope: "repo" }], errors: [] }] } }); return true; }
+      return false;
+    });
+    const snapshots = [
+      { preferences: { codexSyncMcp: true, codexSyncSkills: true }, mcpServers: { synced: { type: "stdio" as const, command: "node", env: { TOKEN: "fixture-secret" } } }, skillPaths: [skill], pluginReferenceWarning: "Package demo has unavailable MCP: missing. You may invoke available skills." },
+      { preferences: { codexMcpConfigPath: customFile, codexSkillRoots: [skillDirectory] }, pluginReferenceWarning: "" },
+      { preferences: {} },
+    ];
+    const resolveResources = vi.fn(async () => snapshots.shift()!);
+    const executor = new NativeCodexExecutor({ ...options, resolveResources });
+    for (let turn = 0; turn < 3; turn++) await executor.execute(input({ inputId: `resource-${turn}`, ...(turn === 0 ? { canonicalInput: "/real-user" } : {}) }));
+    expect(resolveResources).toHaveBeenCalledTimes(3);
+    expect(resolveResources).toHaveBeenNthCalledWith(1, "/real-user");
+    expect(resolveResources).toHaveBeenNthCalledWith(2, "hello");
+    const turns = rpc.calls.filter(call => call.method === "turn/start");
+    expect(JSON.stringify(turns[0]?.params?.additionalContext)).toContain("unavailable MCP: missing");
+    expect(JSON.stringify(turns[1]?.params?.additionalContext)).not.toContain("unavailable MCP: missing");
+    expect(JSON.stringify(turns[1]?.params?.additionalContext)).toContain("No package MCP warnings");
+    const starts = rpc.calls.filter(call => call.method === "thread/start" || call.method === "thread/resume");
+    expect(starts.map(call => call.method)).toEqual(["thread/start", "thread/resume", "thread/resume"]);
+    expect(starts[0]!.params?.config).toMatchObject({ mcp_servers: { native: { enabled: false } }, "skills.config": [{ path: skill, enabled: true }, expect.objectContaining({ enabled: false })] });
+    expect(Object.values((starts[0]!.params?.config as { mcp_servers: object }).mcp_servers)).toContainEqual(expect.objectContaining({ env: { TOKEN: "fixture-secret" } }));
+    expect(starts[1]!.params?.config).not.toHaveProperty("skills.config");
+    expect(starts[2]!.params).not.toHaveProperty("config");
+    expect(mock.spawn.mock.calls.flatMap(call => call[1]).join(" ")).not.toContain("fixture-secret");
+    expect(rpc.calls.filter(call => call.method === "skills/extraRoots/set")).toHaveLength(2);
+    expect(rpc.calls.filter(call => call.method === "turn/start")).toHaveLength(3);
+  });
+});
 
 describe("native title sampling", () => {
   const titleInput = () => ({ sessionId: "session-1", ...activeParams, prompt: "Return only a concise JSON title", traceContext: createRootTraceContext(), signal: new AbortController().signal });

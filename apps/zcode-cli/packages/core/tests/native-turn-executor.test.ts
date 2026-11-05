@@ -225,6 +225,15 @@ function approvalExecutor(decisions: string[]): NativeTurnExecutor {
 }
 
 describe("native turn execution", () => {
+  it("keeps canonical references separate from expanded input and excludes model-only continuations", async () => {
+    const execute = vi.fn<NativeTurnExecutor["execute"]>(async () => ({ text: "done", threadId: "codex-thread", toolCallCount: 0 }));
+    const { runtime } = fixture({ execute });
+    const expanded = "command template [@demo](plugin://demo@personal)";
+    await runtime.executeTurn(expanded, undefined, { displayInput: "/command", inputId: "canonical-reference" });
+    expect(execute.mock.calls[0]?.[0]).toMatchObject({ text: expanded, canonicalInput: "/command" });
+    await runtime.executeTurn(expanded, undefined, { displayInput: "[@demo](plugin://demo@personal)", inputId: "model-only-reference", inputVisibility: "model-only" });
+    expect(execute.mock.calls[1]?.[0]).toMatchObject({ text: expanded, canonicalInput: "" });
+  });
   it("publishes bounded native child Bash output while running without inventing completion", async () => {
     const store = createRecordingMessageStore();
     const ready = Promise.withResolvers<void>(); const release = Promise.withResolvers<void>();

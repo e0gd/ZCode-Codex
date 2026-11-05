@@ -25,6 +25,7 @@ import {
   zcodePluginsReferenceCatalogResultSchema,
 } from "@zcode/shared";
 import type { PluginReferenceCatalog } from "@zcode/contracts";
+import type { NativeCodexResourceSnapshot } from "@zcode/adapters/native-codex";
 import { getPluginReferenceCatalog } from "../src/zcode-protocol/plugin-reference-catalog.js";
 import type {
   ZCodeProtocolAgentServerContext,
@@ -66,6 +67,166 @@ function contextWithSession(sessionId: string): ZCodeProtocolAgentServerContext 
 }
 
 describe("plugins/referenceCatalog protocol", () => {
+  it("warns but retains packages with unavailable MCP and refreshes choices without mutating identity", async () => {
+    const context = contextWithSession("codex-session");
+    const record = context.sessions.get("codex-session")!;
+    const identity: PluginReferenceCatalog = {
+      plugins: [
+        ...SESSION_CATALOG.plugins,
+        {
+          ...SESSION_CATALOG.plugins[0]!,
+          name: "mcp-only",
+          pluginId: "mcp-only@mkt-a",
+          skillQualifiedNames: [],
+          mcpServerNames: ["plugin:mcp-only:main"],
+          rootPath: "/plugins/mcp-only",
+        },
+        {
+          ...SESSION_CATALOG.plugins[0]!,
+          name: "closed",
+          pluginId: "closed@mkt-a",
+          skillQualifiedNames: [],
+          mcpServerNames: ["plugin:closed:main"],
+          rootPath: "/plugins/closed",
+        },
+        {
+          ...SESSION_CATALOG.plugins[0]!,
+          name: "agent-only",
+          pluginId: "agent-only@mkt-a",
+          skillQualifiedNames: [],
+          mcpServerNames: [],
+          rootPath: "/plugins/agent-only",
+        },
+      ],
+    };
+    let snapshot: NativeCodexResourceSnapshot = {
+      preferences: { codexSyncMcp: true, codexSyncSkills: true },
+      mcpServers: { "plugin:mcp-only:main": { type: "stdio", command: "never-executed" } },
+      skillPaths: ["/plugins/frozen/skills/probe/SKILL.md"],
+    };
+    record.app.runtime = { nativeTurnExecutor: {} } as never;
+    record.app.getPluginReferenceCatalog = () => identity;
+    record.app.getNativeCodexResourceSnapshot = vi.fn(async () => snapshot);
+    record.app.getSkillCatalog = vi.fn(
+      async () =>
+        ({
+          skills: [
+            {
+              name: "probe",
+              qualifiedName: "frozen:probe",
+              pluginName: "frozen",
+              pluginId: "frozen@mkt-a",
+              source: "plugin",
+              path: "/plugins/frozen/skills/probe/SKILL.md",
+            },
+          ],
+          diagnostics: [],
+          totalDiscovered: 1,
+        }) as never,
+    );
+    const before = structuredClone(identity);
+    const params = {
+      workspace: { workspacePath: "/w", workspaceKey: "/w" },
+      sessionId: "codex-session",
+    };
+    const result = await getPluginReferenceCatalog(context, params, true);
+    expect(result.plugins.map((entry) => entry.pluginId)).toEqual([
+      "frozen@mkt-a",
+      "mcp-only@mkt-a",
+      "closed@mkt-a",
+    ]);
+    expect(result.plugins[0]).toMatchObject({
+      skillQualifiedNames: ["frozen:probe"],
+      mcpServerNames: [],
+      subagentNames: [],
+    });
+    expect(result.plugins[1]).toMatchObject({
+      skillQualifiedNames: [],
+      mcpServerNames: ["plugin:mcp-only:main"],
+      subagentNames: [],
+    });
+    expect(result.plugins[0]?.description).toContain(
+      "MCP unavailable in Codex: plugin:frozen:main",
+    );
+    expect(result.plugins[0]?.descriptionI18n?.["zh-CN"]).toContain("仍可选择和调用");
+    expect(result.plugins[1]?.description ?? "").not.toContain("MCP unavailable");
+    expect(result.plugins[2]).toMatchObject({ mcpServerNames: [], enabled: true });
+    expect(result.plugins[2]?.description).toContain("plugin:closed:main");
+    expect(() => zcodePluginsReferenceCatalogResultSchema.parse(result)).not.toThrow();
+    snapshot = { preferences: { codexSyncMcp: false, codexSyncSkills: false } };
+    const off = (await getPluginReferenceCatalog(context, params)).plugins;
+    expect(off.map((entry) => entry.pluginId)).toEqual([
+      "frozen@mkt-a",
+      "mcp-only@mkt-a",
+      "closed@mkt-a",
+    ]);
+    expect(
+      off.every(
+        (entry) =>
+          entry.description?.includes("MCP unavailable") &&
+          !entry.mcpServerNames.length &&
+          !entry.skillQualifiedNames.length,
+      ),
+    ).toBe(true);
+    expect(identity).toEqual(before);
+  });
+
+  it("warns about trusted host MCP dependencies, preserves descriptions/conflicts and hides disabled packages", async () => {
+    const context = contextWithSession("codex-session");
+    const app = context.sessions.get("codex-session")!.app;
+    const make = (name: string, marketplace: string) => ({
+      ...SESSION_CATALOG.plugins[0]!,
+      name,
+      marketplace,
+      pluginId: `${name}@${marketplace}`,
+      skillQualifiedNames: [],
+      mcpServerNames: [],
+    });
+    app.runtime = { nativeTurnExecutor: {} } as never;
+    app.getPluginReferenceCatalog = () => ({
+      plugins: [
+        make("browser-use", "zcode-plugins-official"),
+        make("computer-use", "zcode-plugins-official"),
+        make("browser-use", "personal"),
+        {
+          ...make("conflict", "personal"),
+          mcpServerNames: ["missing"],
+          conflictingPluginIds: ["conflict@other"],
+        },
+        { ...make("disabled", "personal"), mcpServerNames: ["missing"], enabled: false },
+      ],
+    });
+    app.getNativeCodexResourceSnapshot = vi.fn(async () => ({ preferences: {} }));
+    const result = await getPluginReferenceCatalog(context, {
+      workspace: { workspacePath: "/w", workspaceKey: "/w" },
+      sessionId: "codex-session",
+    });
+    expect(result.plugins.map((entry) => entry.pluginId)).toEqual([
+      "browser-use@zcode-plugins-official",
+      "computer-use@zcode-plugins-official",
+      "conflict@personal",
+    ]);
+    expect(result.plugins[0]?.description).toMatch(/^⚠ MCP unavailable in Codex: node_repl\./u);
+    expect(result.plugins[0]?.descriptionI18n?.["zh-CN"]).toContain("node_repl");
+    expect(result.plugins[0]?.descriptionI18n?.["zh-CN"]).toContain("浏览");
+    expect(result.plugins[2]?.conflictingPluginIds).toEqual(["conflict@other"]);
+    expect(() => zcodePluginsReferenceCatalogResultSchema.parse(result)).not.toThrow();
+  });
+
+  it("does not advertise Codex plugins when current resource selection cannot be read", async () => {
+    const context = contextWithSession("codex-session");
+    const app = context.sessions.get("codex-session")!.app;
+    app.runtime = { nativeTurnExecutor: {} } as never;
+    app.getNativeCodexResourceSnapshot = vi.fn(async () => {
+      throw new Error("resource-selection-unavailable");
+    });
+    await expect(
+      getPluginReferenceCatalog(context, {
+        workspace: { workspacePath: "/w", workspaceKey: "/w" },
+        sessionId: "codex-session",
+      }),
+    ).rejects.toThrow("resource-selection-unavailable");
+  });
   it("registers the protocol method and schemas", () => {
     expect(zcodeProtocolMethods.pluginsReferenceCatalog).toBe("plugins/referenceCatalog");
     expect(() =>

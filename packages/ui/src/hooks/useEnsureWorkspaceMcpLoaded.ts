@@ -1,5 +1,6 @@
-import { useEffect } from "react";
-import { useServices } from "@/hooks/useServices.js";
+import { useCallback, useEffect, useState } from "react";
+import type { CodexMcpSyncCandidate, CodexSkillSyncCandidate } from "@zcode/shared";
+import { useOptionalServices, useServices } from "@/hooks/useServices.js";
 import { useMcpStore } from "@/store/mcpStore.js";
 
 export function useEnsureWorkspaceMcpLoaded(
@@ -23,4 +24,96 @@ export function useEnsureWorkspaceMcpLoaded(
       .getState()
       .ensureLoadedForWorkspace(workspaceAbsPath, services.mcpSyncService, workspaceIdentity);
   }, [rpcReady, services.mcpSyncService, workspaceAbsPath, workspaceIdentity]);
+}
+
+/** Read compatibility metadata from the executing Host without connecting MCP servers. */
+export function useCodexMcpSyncCandidates(
+  enabled: boolean,
+  workspacePath?: string,
+  workspaceIdentity?: string,
+) {
+  const services = useOptionalServices();
+  const service = services?.mcpSyncService;
+  const [revision, setRevision] = useState(0);
+  const key = JSON.stringify([workspacePath, workspaceIdentity]);
+  const [state, setState] = useState<{
+    key: string;
+    owner: typeof service;
+    status: "loading" | "ready" | "error";
+    candidates: CodexMcpSyncCandidate[];
+  }>({ key: "", owner: undefined, status: "loading", candidates: [] });
+  useEffect(() => {
+    if (!enabled || !workspacePath || !service) return;
+    let cancelled = false;
+    setState({ key, owner: service, status: "loading", candidates: [] });
+    // 切换工作区或 Host 后丢弃旧请求，不能把上一个设备的列表用于当前选择。
+    void Promise.resolve()
+      .then(() => service.listCodexMcpSyncCandidates({ workspacePath, workspaceIdentity }))
+      .then(
+        (candidates) => {
+          if (!cancelled) setState({ key, owner: service, status: "ready", candidates });
+        },
+        () => {
+          if (!cancelled) setState({ key, owner: service, status: "error", candidates: [] });
+        },
+      );
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, workspacePath, workspaceIdentity, service, key, revision]);
+  const reload = useCallback(() => setRevision((value) => value + 1), []);
+  const status = !enabled
+    ? "idle"
+    : !workspacePath || !service
+      ? "unavailable"
+      : state.key !== key || state.owner !== service
+        ? "loading"
+        : state.status;
+  return { status, candidates: status === "ready" ? state.candidates : [], reload };
+}
+
+/** Read only skill metadata from the same Host that supplies native-turn resources. */
+export function useCodexSkillSyncCandidates(
+  enabled: boolean,
+  workspacePath?: string,
+  workspaceIdentity?: string,
+) {
+  const services = useOptionalServices();
+  const service = services?.skillsService;
+  const [revision, setRevision] = useState(0);
+  const key = JSON.stringify([workspacePath, workspaceIdentity]);
+  const [state, setState] = useState<{
+    key: string;
+    owner: typeof service;
+    status: "loading" | "ready" | "error";
+    candidates: CodexSkillSyncCandidate[];
+  }>({ key: "", owner: undefined, status: "loading", candidates: [] });
+  useEffect(() => {
+    if (!enabled || !workspacePath || !service) return;
+    let cancelled = false;
+    setState({ key, owner: service, status: "loading", candidates: [] });
+    // 工作区或 Host 变更时，旧设备技能列表不能回填当前同步选择。
+    void Promise.resolve()
+      .then(() => service.listCodexSyncCandidates({ workspacePath, workspaceIdentity }))
+      .then(
+        (candidates) => {
+          if (!cancelled) setState({ key, owner: service, status: "ready", candidates });
+        },
+        () => {
+          if (!cancelled) setState({ key, owner: service, status: "error", candidates: [] });
+        },
+      );
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, workspacePath, workspaceIdentity, service, key, revision]);
+  const reload = useCallback(() => setRevision((value) => value + 1), []);
+  const status = !enabled
+    ? "idle"
+    : !workspacePath || !service
+      ? "unavailable"
+      : state.key !== key || state.owner !== service
+        ? "loading"
+        : state.status;
+  return { status, candidates: status === "ready" ? state.candidates : [], reload };
 }

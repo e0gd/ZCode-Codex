@@ -3867,13 +3867,28 @@ describe("ZCodeProtocolAgentServer", () => {
       nativeSearchEnhancementsEnabled: true,
     }));
     try {
-      const first = zcodeSessionStateSnapshotSchema.parse(await requestResult(server, {
-        id: 1, method: zcodeProtocolMethods.sessionCreate, params: { workspace },
-      }));
+      const first = zcodeSessionStateSnapshotSchema.parse(
+        await requestResult(server, {
+          id: 1,
+          method: zcodeProtocolMethods.sessionCreate,
+          params: { workspace },
+        }),
+      );
       executionEngine = "zcode";
-      await requestResult(server, { id: 2, method: zcodeProtocolMethods.sessionCreate, params: { workspace } });
-      await requestResult(server, { id: 3, method: zcodeProtocolMethods.sessionResume, params: { sessionId: first.session.sessionId, workspace } });
-      expect(createdAppOptions.map(options => options.executionEngine)).toEqual(["codex", "zcode"]);
+      await requestResult(server, {
+        id: 2,
+        method: zcodeProtocolMethods.sessionCreate,
+        params: { workspace },
+      });
+      await requestResult(server, {
+        id: 3,
+        method: zcodeProtocolMethods.sessionResume,
+        params: { sessionId: first.session.sessionId, workspace },
+      });
+      expect(createdAppOptions.map((options) => options.executionEngine)).toEqual([
+        "codex",
+        "zcode",
+      ]);
       expect(requests).toHaveLength(2);
     } finally {
       await server.shutdown();
@@ -3883,7 +3898,7 @@ describe("ZCodeProtocolAgentServer", () => {
   it("refreshes native delegation preferences through the trusted Host for the existing session", async () => {
     const createdAppOptions: ZCodeAppOptions[] = [];
     const server = new ZCodeProtocolAgentServer({
-      createZCodeApp: options => {
+      createZCodeApp: (options) => {
         createdAppOptions.push(options);
         return createFakeApp(options);
       },
@@ -3896,17 +3911,87 @@ describe("ZCodeProtocolAgentServer", () => {
       ...(enabled === undefined ? {} : { codexAutoSubagentsEnabled: enabled }),
     }));
     try {
-      await requestResult(server, { id: 1, method: zcodeProtocolMethods.sessionCreate, params: { workspace } });
+      await requestResult(server, {
+        id: 1,
+        method: zcodeProtocolMethods.sessionCreate,
+        params: { workspace },
+      });
       const read = createdAppOptions[0]!.resolveCodexAutoSubagents!;
       expect(await read()).toBe(false);
       enabled = true;
       expect(await read()).toBe(true);
       enabled = false;
       expect(await read()).toBe(false);
-      expect(requests.map(request => (request.params as { scope: string }).scope)).toEqual([
-        "runtime-materialization", "user-execution", "user-execution", "user-execution",
+      expect(requests.map((request) => (request.params as { scope: string }).scope)).toEqual([
+        "runtime-materialization",
+        "user-execution",
+        "user-execution",
+        "user-execution",
       ]);
-      expect(new Set(requests.map(request => (request.params as { sessionId: string }).sessionId)).size).toBe(1);
+      expect(
+        new Set(requests.map((request) => (request.params as { sessionId: string }).sessionId))
+          .size,
+      ).toBe(1);
+      expect(createdAppOptions).toHaveLength(1);
+    } finally {
+      await server.shutdown();
+    }
+  });
+
+  it("refreshes native resource preferences and preserves Host MCP source, disabled rows and skill paths", async () => {
+    const createdAppOptions: ZCodeAppOptions[] = [];
+    const server = new ZCodeProtocolAgentServer({
+      createZCodeApp: (options) => {
+        createdAppOptions.push(options);
+        return createFakeApp(options);
+      },
+      cwd: workspace.workspacePath,
+    });
+    let enabled = false;
+    const requests = attachSessionRuntimePreferencesResponder(server, () => ({
+      executionEngine: "codex",
+      nativeSearchEnhancementsEnabled: true,
+      codexSyncMcp: enabled,
+      codexMcpDisabledServers: ["manual"],
+      codexSyncSkills: enabled,
+      codexSkillPaths: ["/host/.zcode/skills/enabled/SKILL.md"],
+      codexMcpServers: [
+        {
+          server: { name: "same", scope: "workspace", command: "project", args: [], env: [] },
+          enabled: false,
+        },
+        {
+          server: { name: "same", scope: "user", command: "user", args: [], env: [] },
+          enabled: true,
+        },
+      ],
+    }));
+    try {
+      await requestResult(server, {
+        id: 1,
+        method: zcodeProtocolMethods.sessionCreate,
+        params: { workspace },
+      });
+      const read = createdAppOptions[0]!.resolveCodexResourcePreferences!;
+      expect((await read()).preferences.codexSyncMcp).toBe(false);
+      enabled = true;
+      const current = await read();
+      expect(current.preferences).toMatchObject({
+        codexSyncMcp: true,
+        codexSyncSkills: true,
+        codexMcpDisabledServers: ["manual"],
+      });
+      expect(current.skillPaths).toEqual(["/host/.zcode/skills/enabled/SKILL.md"]);
+      expect(current.mcpServers?.same).toMatchObject({
+        command: "project",
+        source: { kind: "workspace" },
+        enabled: false,
+      });
+      expect(requests.map((request) => (request.params as { scope: string }).scope)).toEqual([
+        "runtime-materialization",
+        "native-codex-resources",
+        "native-codex-resources",
+      ]);
       expect(createdAppOptions).toHaveLength(1);
     } finally {
       await server.shutdown();
@@ -7517,241 +7602,250 @@ describe("ZCodeProtocolAgentServer", () => {
     ]);
   });
 
-  it.each(["zcode", "codex"] as const)("forks sessions and lets selection children inherit parent runtime preferences (%s)", async (executionEngine) => {
-    const store = await createSqliteSessionStore({ dbPath: ":memory:" });
-    const forkTargets: Array<{ targetCheckpointId?: string; targetMessageId?: string }> = [];
-    const createdAppOptions: ZCodeAppOptions[] = [];
-    const selectionChildId = "sess_selection_runtime_preferences" as SessionId;
-    try {
-      const server = new ZCodeProtocolAgentServer({
-        createZCodeApp: (options) => {
-          createdAppOptions.push(options);
-          const app = createFakeApp(options);
-          return {
-            ...app,
-            clearTarget: async () => await store.clearTarget({ sessionID: app.sessionId }),
-            forkFromCheckpoint: async (target) => {
-              forkTargets.push({
-                targetCheckpointId: target?.targetCheckpointId,
-                targetMessageId: target?.targetMessageId,
-              });
-              const forkedSessionId = "sess_forked" as SessionId;
-              if (!(await store.getSession(forkedSessionId))) {
-                await store.createSession({
-                  id: forkedSessionId,
-                  parentID: options?.sessionId,
-                  projectID: "project_fork_runtime_settings" as ProjectId,
-                  slug: "fork-runtime-settings",
-                  directory: workspace.workspacePath,
-                  path: workspace.workspacePath,
-                  title: "Fork runtime settings",
-                  version: "test-version",
-                  time: { created: 10, updated: 10 },
+  it.each(["zcode", "codex"] as const)(
+    "forks sessions and lets selection children inherit parent runtime preferences (%s)",
+    async (executionEngine) => {
+      const store = await createSqliteSessionStore({ dbPath: ":memory:" });
+      const forkTargets: Array<{ targetCheckpointId?: string; targetMessageId?: string }> = [];
+      const createdAppOptions: ZCodeAppOptions[] = [];
+      const selectionChildId = "sess_selection_runtime_preferences" as SessionId;
+      try {
+        const server = new ZCodeProtocolAgentServer({
+          createZCodeApp: (options) => {
+            createdAppOptions.push(options);
+            const app = createFakeApp(options);
+            return {
+              ...app,
+              clearTarget: async () => await store.clearTarget({ sessionID: app.sessionId }),
+              forkFromCheckpoint: async (target) => {
+                forkTargets.push({
+                  targetCheckpointId: target?.targetCheckpointId,
+                  targetMessageId: target?.targetMessageId,
                 });
-              }
-              return {
-                checkpoint: {} as never,
-                copiedMessageCount: 2,
-                forkedSessionId,
-                parentSessionId: (options?.sessionId ?? "sess_parent") as never,
-                targetMessageId: "msg_assistant_1" as never,
-                targetCheckpointId: "checkpoint_1",
-                restoredFiles: [],
-                response: "forked",
-              };
-            },
-            readTarget: async () => await store.readTarget({ sessionID: app.sessionId }),
-            runtime: {
-              ...app.runtime,
-              nativeTurnExecutor: executionEngine === "codex" ? { execute: vi.fn() } : undefined,
-              createSelectionSideConversation: async () => {
-                if (!(await store.getSession(selectionChildId))) {
+                const forkedSessionId = "sess_forked" as SessionId;
+                if (!(await store.getSession(forkedSessionId))) {
                   await store.createSession({
-                    id: selectionChildId,
-                    parentID: app.sessionId,
-                    projectID: "project_selection_runtime_preferences" as ProjectId,
-                    slug: "selection-runtime-preferences",
+                    id: forkedSessionId,
+                    parentID: options?.sessionId,
+                    projectID: "project_fork_runtime_settings" as ProjectId,
+                    slug: "fork-runtime-settings",
                     directory: workspace.workspacePath,
                     path: workspace.workspacePath,
-                    taskType: "selection_side_chat",
-                    title: "Selection runtime preferences",
+                    title: "Fork runtime settings",
                     version: "test-version",
-                    time: { created: 20, updated: 20 },
+                    time: { created: 10, updated: 10 },
                   });
                 }
                 return {
-                  forkedSessionId: selectionChildId,
-                  parentSessionId: app.sessionId,
-                  response: "selection child",
-                  targetMessageId: "msg_assistant_1" as MessageId,
-                } as never;
+                  checkpoint: {} as never,
+                  copiedMessageCount: 2,
+                  forkedSessionId,
+                  parentSessionId: (options?.sessionId ?? "sess_parent") as never,
+                  targetMessageId: "msg_assistant_1" as never,
+                  targetCheckpointId: "checkpoint_1",
+                  restoredFiles: [],
+                  response: "forked",
+                };
               },
-            } as never,
-            setTarget: async (input) =>
-              await store.setTarget({
-                objective: input.objective,
-                sessionID: app.sessionId,
-                status: input.status ?? "active",
-                tokenBudget: input.tokenBudget,
-              }),
-            updateTargetStatus: async (status) =>
-              await store.updateTargetStatus({ sessionID: app.sessionId, status }),
-          } satisfies ZCodeApp;
-        },
-        cwd: workspace.workspacePath,
-        sessionStore: store,
-      });
-      let toolSearchMode: "local" | "off" = "local";
-      const preferenceRequests = attachSessionRuntimePreferencesResponder(server, () => ({
-        executionEngine,
-        nativeSearchEnhancementsEnabled: false,
-        toolSearchMode,
-        memoryEnabled: false,
-        subagentRuntimeConfigEnabled: true,
-        modelContextBudgetStrategy: "preflight-v1",
-      }));
-      const created = zcodeSessionStateSnapshotSchema.parse(
-        await requestResult(server, {
-          id: 1,
-          method: zcodeProtocolMethods.sessionCreate,
-          params: { workspace },
-        }),
-      );
-      if (!(await store.getSession(created.session.sessionId as SessionId))) {
-        await store.createSession({
-          id: created.session.sessionId as SessionId,
-          projectID: "project_fork_runtime_settings" as ProjectId,
-          slug: "fork-runtime-settings-parent",
-          directory: workspace.workspacePath,
-          path: workspace.workspacePath,
-          title: "Fork runtime settings parent",
-          version: "test-version",
-          time: { created: 1, updated: 1 },
+              readTarget: async () => await store.readTarget({ sessionID: app.sessionId }),
+              runtime: {
+                ...app.runtime,
+                nativeTurnExecutor: executionEngine === "codex" ? { execute: vi.fn() } : undefined,
+                createSelectionSideConversation: async () => {
+                  if (!(await store.getSession(selectionChildId))) {
+                    await store.createSession({
+                      id: selectionChildId,
+                      parentID: app.sessionId,
+                      projectID: "project_selection_runtime_preferences" as ProjectId,
+                      slug: "selection-runtime-preferences",
+                      directory: workspace.workspacePath,
+                      path: workspace.workspacePath,
+                      taskType: "selection_side_chat",
+                      title: "Selection runtime preferences",
+                      version: "test-version",
+                      time: { created: 20, updated: 20 },
+                    });
+                  }
+                  return {
+                    forkedSessionId: selectionChildId,
+                    parentSessionId: app.sessionId,
+                    response: "selection child",
+                    targetMessageId: "msg_assistant_1" as MessageId,
+                  } as never;
+                },
+              } as never,
+              setTarget: async (input) =>
+                await store.setTarget({
+                  objective: input.objective,
+                  sessionID: app.sessionId,
+                  status: input.status ?? "active",
+                  tokenBudget: input.tokenBudget,
+                }),
+              updateTargetStatus: async (status) =>
+                await store.updateTargetStatus({ sessionID: app.sessionId, status }),
+            } satisfies ZCodeApp;
+          },
+          cwd: workspace.workspacePath,
+          sessionStore: store,
         });
+        let toolSearchMode: "local" | "off" = "local";
+        const preferenceRequests = attachSessionRuntimePreferencesResponder(server, () => ({
+          executionEngine,
+          nativeSearchEnhancementsEnabled: false,
+          toolSearchMode,
+          memoryEnabled: false,
+          subagentRuntimeConfigEnabled: true,
+          modelContextBudgetStrategy: "preflight-v1",
+        }));
+        const created = zcodeSessionStateSnapshotSchema.parse(
+          await requestResult(server, {
+            id: 1,
+            method: zcodeProtocolMethods.sessionCreate,
+            params: { workspace },
+          }),
+        );
+        if (!(await store.getSession(created.session.sessionId as SessionId))) {
+          await store.createSession({
+            id: created.session.sessionId as SessionId,
+            projectID: "project_fork_runtime_settings" as ProjectId,
+            slug: "fork-runtime-settings-parent",
+            directory: workspace.workspacePath,
+            path: workspace.workspacePath,
+            title: "Fork runtime settings parent",
+            version: "test-version",
+            time: { created: 1, updated: 1 },
+          });
+        }
+        await requestResult(server, {
+          id: 2,
+          method: zcodeProtocolMethods.sessionSetModel,
+          params: {
+            sessionId: created.session.sessionId,
+            model: { providerId: "glm", modelId: "glm-4-air" },
+          },
+        });
+        await requestResult(server, {
+          id: 3,
+          method: zcodeProtocolMethods.sessionSetMode,
+          params: {
+            sessionId: created.session.sessionId,
+            mode: "plan",
+          },
+        });
+        await requestResult(server, {
+          id: 4,
+          method: zcodeProtocolMethods.sessionSetThoughtLevel,
+          params: {
+            sessionId: created.session.sessionId,
+            thoughtLevel: "deep",
+          },
+        });
+        const goal = zcodeSessionGoalResultSchema.parse(
+          await requestResult(server, {
+            id: 5,
+            method: zcodeProtocolMethods.sessionGoal,
+            params: {
+              sessionId: created.session.sessionId,
+              action: "set",
+              objective: "Fork inherits parent goal target",
+            },
+          }),
+        );
+        expect(goal.snapshot.session.target).toMatchObject({
+          objective: "Fork inherits parent goal target",
+          sessionId: created.session.sessionId,
+          status: "active",
+        });
+
+        toolSearchMode = "off";
+        const result = zcodeSessionForkResultSchema.parse(
+          await requestResult(server, {
+            id: 6,
+            method: zcodeProtocolMethods.sessionFork,
+            params: {
+              sessionId: created.session.sessionId,
+              target: { kind: "message", messageId: "msg_assistant_1" },
+            },
+          }),
+        );
+
+        expect(forkTargets).toEqual([
+          expect.objectContaining({ targetMessageId: "msg_assistant_1" }),
+        ]);
+        expect(result).toMatchObject({
+          forkedSessionId: "sess_forked",
+          targetMessageId: "msg_assistant_1",
+          targetCheckpointId: "checkpoint_1",
+        });
+        expect(result.snapshot.session.sessionId).toBe("sess_forked");
+        expect(result.snapshot.settings).toMatchObject({
+          mode: { current: "plan" },
+          model: { current: { providerId: "glm", modelId: "glm-4-air" } },
+          thoughtLevel: { current: "deep" },
+        });
+        expect(createdAppOptions).toHaveLength(2);
+        expect(createdAppOptions[0]?.executionEngine).toBe(executionEngine);
+        expect(createdAppOptions[1]?.executionEngine).toBe(executionEngine);
+        expect(createdAppOptions[1]?.readSubagentRuntimeConfig).toBeTypeOf("function");
+        expect(preferenceRequests).toHaveLength(1);
+        expect(createdAppOptions[1]?.runtimeConfig?.toolSearch).toEqual({ mode: "local" });
+        expect(createdAppOptions[1]?.runtimeConfig?.nativeSearchEnhancementsEnabled).toBe(false);
+        expect(createdAppOptions[1]?.runtimeConfig?.memory?.enabled).toBe(false);
+        expect(createdAppOptions[1]?.runtimeConfig?.modelContextBudgetStrategy).toBe(
+          "preflight-v1",
+        );
+        expect(result.snapshot.session.target).toMatchObject({
+          objective: "Fork inherits parent goal target",
+          sessionId: "sess_forked",
+          status: "active",
+        });
+        expect(result.snapshot.projection.target).toMatchObject({
+          objective: "Fork inherits parent goal target",
+          sessionId: "sess_forked",
+          status: "active",
+        });
+        expect(result.snapshot.session.target?.targetId).toBe(
+          goal.snapshot.session.target?.targetId,
+        );
+        expect(await store.readTarget({ sessionID: "sess_forked" as SessionId })).toMatchObject({
+          objective: "Fork inherits parent goal target",
+        });
+
+        const selection = await requestResult(server, {
+          id: 7,
+          method: V4_METHODS.command,
+          params: {
+            clientId: "client-selection-runtime-preferences",
+            commandId: "cmd-selection-runtime-preferences",
+            issuedAt: 20,
+            payload: {},
+            sessionId: created.session.sessionId,
+            type: "createSelectionSideSession",
+          },
+        });
+        expect(selection).toMatchObject({
+          status: "accepted",
+          result: {
+            sessionId: selectionChildId,
+            type: "createSelectionSideSession",
+          },
+        });
+        expect(createdAppOptions).toHaveLength(3);
+        expect(createdAppOptions[2]?.executionEngine).toBe(executionEngine);
+        expect(createdAppOptions[2]?.readSubagentRuntimeConfig).toBeTypeOf("function");
+        expect(preferenceRequests).toHaveLength(1);
+        expect(createdAppOptions[2]?.runtimeConfig?.toolSearch).toEqual({ mode: "local" });
+        expect(createdAppOptions[2]?.runtimeConfig?.nativeSearchEnhancementsEnabled).toBe(false);
+        expect(createdAppOptions[2]?.runtimeConfig?.memory?.enabled).toBe(false);
+        expect(createdAppOptions[2]?.runtimeConfig?.modelContextBudgetStrategy).toBe(
+          "preflight-v1",
+        );
+        expect((await store.getSession(selectionChildId))?.taskType).toBe("selection_side_chat");
+      } finally {
+        await store.close();
       }
-      await requestResult(server, {
-        id: 2,
-        method: zcodeProtocolMethods.sessionSetModel,
-        params: {
-          sessionId: created.session.sessionId,
-          model: { providerId: "glm", modelId: "glm-4-air" },
-        },
-      });
-      await requestResult(server, {
-        id: 3,
-        method: zcodeProtocolMethods.sessionSetMode,
-        params: {
-          sessionId: created.session.sessionId,
-          mode: "plan",
-        },
-      });
-      await requestResult(server, {
-        id: 4,
-        method: zcodeProtocolMethods.sessionSetThoughtLevel,
-        params: {
-          sessionId: created.session.sessionId,
-          thoughtLevel: "deep",
-        },
-      });
-      const goal = zcodeSessionGoalResultSchema.parse(
-        await requestResult(server, {
-          id: 5,
-          method: zcodeProtocolMethods.sessionGoal,
-          params: {
-            sessionId: created.session.sessionId,
-            action: "set",
-            objective: "Fork inherits parent goal target",
-          },
-        }),
-      );
-      expect(goal.snapshot.session.target).toMatchObject({
-        objective: "Fork inherits parent goal target",
-        sessionId: created.session.sessionId,
-        status: "active",
-      });
-
-      toolSearchMode = "off";
-      const result = zcodeSessionForkResultSchema.parse(
-        await requestResult(server, {
-          id: 6,
-          method: zcodeProtocolMethods.sessionFork,
-          params: {
-            sessionId: created.session.sessionId,
-            target: { kind: "message", messageId: "msg_assistant_1" },
-          },
-        }),
-      );
-
-      expect(forkTargets).toEqual([
-        expect.objectContaining({ targetMessageId: "msg_assistant_1" }),
-      ]);
-      expect(result).toMatchObject({
-        forkedSessionId: "sess_forked",
-        targetMessageId: "msg_assistant_1",
-        targetCheckpointId: "checkpoint_1",
-      });
-      expect(result.snapshot.session.sessionId).toBe("sess_forked");
-      expect(result.snapshot.settings).toMatchObject({
-        mode: { current: "plan" },
-        model: { current: { providerId: "glm", modelId: "glm-4-air" } },
-        thoughtLevel: { current: "deep" },
-      });
-      expect(createdAppOptions).toHaveLength(2);
-      expect(createdAppOptions[0]?.executionEngine).toBe(executionEngine);
-      expect(createdAppOptions[1]?.executionEngine).toBe(executionEngine);
-      expect(createdAppOptions[1]?.readSubagentRuntimeConfig).toBeTypeOf("function");
-      expect(preferenceRequests).toHaveLength(1);
-      expect(createdAppOptions[1]?.runtimeConfig?.toolSearch).toEqual({ mode: "local" });
-      expect(createdAppOptions[1]?.runtimeConfig?.nativeSearchEnhancementsEnabled).toBe(false);
-      expect(createdAppOptions[1]?.runtimeConfig?.memory?.enabled).toBe(false);
-      expect(createdAppOptions[1]?.runtimeConfig?.modelContextBudgetStrategy).toBe("preflight-v1");
-      expect(result.snapshot.session.target).toMatchObject({
-        objective: "Fork inherits parent goal target",
-        sessionId: "sess_forked",
-        status: "active",
-      });
-      expect(result.snapshot.projection.target).toMatchObject({
-        objective: "Fork inherits parent goal target",
-        sessionId: "sess_forked",
-        status: "active",
-      });
-      expect(result.snapshot.session.target?.targetId).toBe(goal.snapshot.session.target?.targetId);
-      expect(await store.readTarget({ sessionID: "sess_forked" as SessionId })).toMatchObject({
-        objective: "Fork inherits parent goal target",
-      });
-
-      const selection = await requestResult(server, {
-        id: 7,
-        method: V4_METHODS.command,
-        params: {
-          clientId: "client-selection-runtime-preferences",
-          commandId: "cmd-selection-runtime-preferences",
-          issuedAt: 20,
-          payload: {},
-          sessionId: created.session.sessionId,
-          type: "createSelectionSideSession",
-        },
-      });
-      expect(selection).toMatchObject({
-        status: "accepted",
-        result: {
-          sessionId: selectionChildId,
-          type: "createSelectionSideSession",
-        },
-      });
-      expect(createdAppOptions).toHaveLength(3);
-      expect(createdAppOptions[2]?.executionEngine).toBe(executionEngine);
-      expect(createdAppOptions[2]?.readSubagentRuntimeConfig).toBeTypeOf("function");
-      expect(preferenceRequests).toHaveLength(1);
-      expect(createdAppOptions[2]?.runtimeConfig?.toolSearch).toEqual({ mode: "local" });
-      expect(createdAppOptions[2]?.runtimeConfig?.nativeSearchEnhancementsEnabled).toBe(false);
-      expect(createdAppOptions[2]?.runtimeConfig?.memory?.enabled).toBe(false);
-      expect(createdAppOptions[2]?.runtimeConfig?.modelContextBudgetStrategy).toBe("preflight-v1");
-      expect((await store.getSession(selectionChildId))?.taskType).toBe("selection_side_chat");
-    } finally {
-      await store.close();
-    }
-  });
+    },
+  );
 
   it("resolves turn fork targets before later user, fork, and compact synthetic messages", async () => {
     const store = await createSqliteSessionStore({ dbPath: ":memory:" });
@@ -8075,7 +8169,9 @@ function setTestNotificationSink(
 
 function attachSessionRuntimePreferencesResponder(
   server: ZCodeProtocolAgentServer,
-  resolvePreferences: (scope: "runtime-materialization" | "user-execution") => {
+  resolvePreferences: (
+    scope: "runtime-materialization" | "user-execution" | "native-codex-resources",
+  ) => {
     executionEngine?: "zcode" | "codex";
     codexAutoSubagentsEnabled?: boolean;
     nativeSearchEnhancementsEnabled: boolean;

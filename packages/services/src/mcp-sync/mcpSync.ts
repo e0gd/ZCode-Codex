@@ -1,4 +1,5 @@
 import type {
+  CodexMcpSyncCandidate,
   LoadCliMcpFromUserDirectoryRequest,
   LoadCliMcpFromUserDirectoryResult,
   McpDataSyncPayload,
@@ -17,6 +18,11 @@ import { createServiceDescriptor } from "../descriptors.js";
  * MCP 通道：设置页配置读写 + 数据同步（IDataSyncCategoryService，docs/remote/data-sync.md「MCP 服务器」）。
  */
 export interface IMcpSyncService extends IDataSyncCategoryService<McpDataSyncPayload> {
+  /** Static Codex compatibility metadata only; never connects or changes ZCode MCP enable state. */
+  listCodexMcpSyncCandidates(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+  }): Promise<CodexMcpSyncCandidate[]>;
   loadMcpFromUserDirectory(
     request?: LoadCliMcpFromUserDirectoryRequest,
   ): Promise<LoadCliMcpFromUserDirectoryResult>;

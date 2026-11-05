@@ -21,7 +21,10 @@ import { createNodeSessionMailboxAdapter } from "@zcode/adapters/mailbox";
 import { createNodeContextSourceAdapter } from "@zcode/adapters/context";
 import { createNodeSkillAdapter } from "@zcode/adapters/skills";
 import { createMcpAdapter } from "@zcode/adapters/mcp";
-import { createNativeCodexExecutor, createNativeCodexExecutorFromEnv } from "@zcode/adapters/native-codex";
+import {
+  createNativeCodexExecutor,
+  createNativeCodexExecutorFromEnv,
+} from "@zcode/adapters/native-codex";
 import {
   AgentRuntime,
   normalizeAgentProfiles,
@@ -77,7 +80,12 @@ import { createInputFacade } from "./input-facade.js";
 import { createPluginFacadeForApp } from "./plugin-facade.js";
 import { resolvePluginRuntimeFeatures } from "./plugin-runtime-features.js";
 import { createSessionFacade } from "./session-facade.js";
-import { resolveAppRuntimeConfig, runtimeConfigLogContext } from "./runtime-config.js";
+import {
+  resolveAppRuntimeConfig,
+  resolveNativeCodexResourceSnapshot,
+  buildNativeCodexPluginReferenceWarning,
+  runtimeConfigLogContext,
+} from "./runtime-config.js";
 import { resolveBundledSkillRoots } from "./bundled-skills.js";
 import { resolveMcpNodeFallbackProvider } from "./mcp-node-fallback.js";
 import { collectDynamicWorkflowDisabledSkillPaths } from "./dynamic-workflow-gate.js";
@@ -105,11 +113,15 @@ import {
   injectNodeReplBrowserBroker,
   type NodeReplBrowserBroker,
 } from "./node-repl-browser-broker.js";
-import { resolveBuiltInNodeReplMcpServers } from "./built-in-node-repl.js";
+import {
+  BUILT_IN_NODE_REPL_SERVER_NAME,
+  resolveBuiltInNodeReplMcpServers,
+} from "./built-in-node-repl.js";
 import { resolveZCodeCustomCommandPrompt } from "../custom-command-prompt.js";
 import { resolveZCodeBuiltinPromptCommandInvocation } from "../builtin-prompt-command.js";
 import { BUILTIN_WORKFLOW_COMMAND_NAME } from "../builtin-workflow-command.js";
 import { collectDisabledPaths } from "../skill-command-overrides.js";
+import { listZCodeSkills } from "../skills.js";
 import {
   loadPluginAgentTemplates,
   resolvePluginAgentProfiles,
@@ -435,28 +447,24 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
             nodeFallback: resolveMcpNodeFallbackProvider({ cliStorageRoot, logger }),
             workingDirectory,
           })));
-    const mcpPort = rawMcpPort
-      ? createWorkspaceMcpTrust({
-          workingDirectory,
-          workspaceIdentity: options.runtimeConfig?.memory?.workspaceIdentity,
-          userConfigPath: options.userConfigPath,
-          projectConfigPath: options.projectConfigPath,
-          skipUserConfig: options.skipUserConfig,
-          env: options.env,
-          onAdmissionChanged: async (payload) => {
-            if (!runtime) return;
-            await runtime.appendEvent(
-              createSessionEvent(
-                SessionEventType.WorkspaceMcpAdmissionUpdated,
-                sessionId,
-                payload,
-                { traceId: traceContext.traceId },
-              ),
-              traceContext,
-            );
-          },
-        }).guard(rawMcpPort)
-      : undefined;
+    const workspaceMcpTrust = createWorkspaceMcpTrust({
+      workingDirectory,
+      workspaceIdentity: options.runtimeConfig?.memory?.workspaceIdentity,
+      userConfigPath: options.userConfigPath,
+      projectConfigPath: options.projectConfigPath,
+      skipUserConfig: options.skipUserConfig,
+      env: options.env,
+      onAdmissionChanged: async (payload) => {
+        if (!runtime) return;
+        await runtime.appendEvent(
+          createSessionEvent(SessionEventType.WorkspaceMcpAdmissionUpdated, sessionId, payload, {
+            traceId: traceContext.traceId,
+          }),
+          traceContext,
+        );
+      },
+    });
+    const mcpPort = rawMcpPort ? workspaceMcpTrust.guard(rawMcpPort) : undefined;
     const ownsMcpPort = options.mcpPort === undefined && mcpPort !== undefined;
     const baseExecutionPort =
       options.executionPort ??
@@ -855,13 +863,118 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       registry: options.providerRegistry,
       currentSelection: () => getRuntime().getSessionModelSelection(),
     });
+    const readCurrentNativeSkills = async () => {
+      const outcome = await listZCodeSkills({
+        env: options.env,
+        logger,
+        projectConfigPath: options.projectConfigPath,
+        skipUserConfig: options.skipUserConfig,
+        userConfigPath: options.userConfigPath,
+        workingDirectory,
+        includeVisualize: options.includeVisualize === true,
+      });
+      const disabled = new Set(
+        runtimeConfig.dynamicWorkflowEnabled === false
+          ? collectDynamicWorkflowDisabledSkillPaths(bundledSkillRoots)
+          : [],
+      );
+      return { ...outcome, skills: outcome.skills.filter((skill) => !disabled.has(skill.path)) };
+    };
+    // Codex picker 与执行共用资源 owner；只读发现不能初始化 Core context 或启动 ZCode MCP。
+    const resolveCurrentNativeResources = async (userInput?: string) => {
+      const snapshot = await resolveNativeCodexResourceSnapshot({
+        resolvePreferences: options.resolveCodexResourcePreferences,
+        allowsMcpServer: (name, config) => workspaceMcpTrust.allows(name, config),
+        discoverMcpServers: async (hostServers) => {
+          const freshConfig = createConfig({
+            env: options.env,
+            projectConfigPath: options.projectConfigPath,
+            workingDirectory,
+            workspaceIdentity: options.runtimeConfig?.memory?.workspaceIdentity,
+            skipUserConfig: options.skipUserConfig,
+            userConfigPath: options.userConfigPath,
+            cliOverrides: createConfigCliOverrides(options),
+          });
+          const diagnostics = [
+            ...freshConfig.sources.user.diagnostics,
+            ...freshConfig.sources.project.diagnostics,
+          ];
+          if (diagnostics.some((item) => item.severity === "error")) {
+            throw new Error("Codex could not read the current ZCode resource configuration.");
+          }
+          const freshPlugins = resolveStartupPlugins({
+            cliStorageRoot,
+            configResult: freshConfig,
+            env: options.env,
+            logger,
+            options,
+            startupTimer,
+            workingDirectory,
+          });
+          const freshBuiltIns = Object.fromEntries(
+            Object.entries(
+              resolveBuiltInNodeReplMcpServers({
+                pluginOutcome: freshPlugins,
+                workingDirectory,
+              }),
+            ).map(([name, config]) => [name, { ...config, source: { kind: "builtin" as const } }]),
+          );
+          const fresh = resolveAppRuntimeConfig({
+            cliStorageRoot,
+            configResult: freshConfig,
+            options: {
+              ...options,
+              runtimeConfig: {
+                ...options.runtimeConfig,
+                // Host 快照是同一设置 owner 的当轮读取，不沿用建会话时的 UI MCP 列表。
+                mcp: {
+                  enabled: options.runtimeConfig?.mcp?.enabled ?? freshConfig.config.features.mcp,
+                  servers: hostServers ?? freshConfig.config.mcp.servers,
+                },
+              },
+            },
+            builtInMcpServers: freshBuiltIns,
+            pluginMcpServers: freshPlugins.mcpServers,
+            pluginRuntimeFeatures: resolvePluginRuntimeFeatures(freshPlugins),
+            subagentOutputRootDir: join(cliStorageRoot, "agents"),
+            workingDirectory,
+          });
+          if (!fresh.runtimeConfig.mcp?.enabled) return {};
+          // node_repl 是 ZCode 内部 broker 宿主，依赖专用协议/权限；不能当外部 MCP 注入 Codex。
+          return Object.fromEntries(
+            Object.entries(fresh.runtimeConfig.mcp.servers ?? {}).filter(
+              ([name, config]) =>
+                name !== BUILT_IN_NODE_REPL_SERVER_NAME || config.source?.kind !== "builtin",
+            ),
+          );
+        },
+        discoverSkillPaths: async () => {
+          return (await readCurrentNativeSkills()).skills.map((skill) => skill.path);
+        },
+      });
+      if (userInput !== undefined) {
+        snapshot.pluginReferenceWarning = buildNativeCodexPluginReferenceWarning(userInput, pluginReferenceCatalog, snapshot);
+      }
+      return snapshot;
+    };
     runtime = new AgentRuntime(sessionId, runtimeConfig, {
       // 项目引擎由 Host 冻结；显式 ZCode 不得被进程级实验变量切换。
-      nativeTurnExecutor: options.executionEngine === "codex"
-        ? await createNativeCodexExecutor({ workspacePath: workingDirectory, env: options.env ?? process.env, resolveModel: providerModelRuntime.resolveNativeCodexModel, resolveAutoSubagents: options.resolveCodexAutoSubagents })
-        : options.executionEngine === "zcode"
-          ? undefined
-          : createNativeCodexExecutorFromEnv(workingDirectory, options.env ?? process.env, providerModelRuntime.resolveNativeCodexModel),
+      nativeTurnExecutor:
+        options.executionEngine === "codex"
+          ? await createNativeCodexExecutor({
+              workspacePath: workingDirectory,
+              env: options.env ?? process.env,
+              resolveModel: providerModelRuntime.resolveNativeCodexModel,
+              resolveAutoSubagents: options.resolveCodexAutoSubagents,
+              resolveResources: resolveCurrentNativeResources,
+            })
+          : options.executionEngine === "zcode"
+            ? undefined
+            : createNativeCodexExecutorFromEnv(
+                workingDirectory,
+                options.env ?? process.env,
+                providerModelRuntime.resolveNativeCodexModel,
+              ),
       ...(options.readSubagentRuntimeConfig
         ? {
             loadAgentDefinitions: async (input) => {
@@ -1516,7 +1629,10 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
           }),
       ...createPluginFacadeForApp({ configResult, options, workingDirectory }),
       getPluginReferenceCatalog: () => pluginReferenceCatalog,
+      getNativeCodexResourceSnapshot: resolveCurrentNativeResources,
       getSkillCatalog: async () => {
+        // 原 getSkillCatalog 会 ensureContextInitialized 并连接 ZCode MCP；Codex picker 只读目录。
+        if (getRuntime().nativeTurnExecutor) return await readCurrentNativeSkills();
         // Skill 目录属于 context 初始化结果。冷恢复必须先恢复 Session 边界，再读取
         // 新 runtime 的快照，不能绕开 resume 后用旧工作目录独立扫描。
         await prepareUserExecutionBoundary({ traceContext });

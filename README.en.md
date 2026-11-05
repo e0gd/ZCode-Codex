@@ -32,6 +32,12 @@ See [usage and limitations](NATIVE_CODEX.md) and [validation evidence](docs/test
 
 Install the [official Codex CLI](https://github.com/openai/codex) separately, configure a compatible provider and model in ZCode or sign in with ChatGPT, then select **Execution engine → Codex** when creating a project. Projects using ZCode do not require Codex.
 
+### Standard installation paths
+
+Public standard installers preserve the original user and project paths. A normal launch uses the operating system user's `HOME` / `USERPROFILE`, reads the original MCP configuration under `~/.zcode`, user skills in `~/.zcode/skills` and `~/.agents/skills`, and configuration/skills at the original project paths. Here `~` belongs to the computer executing the session; existing explicit environment or data-directory overrides retain their precedence. The installer does not enable a machine-specific portable launcher that redirects these paths to an independent `Data` directory.
+
+The **ZCode Preview** identity allows installation alongside the original and separates Electron profile data and Helper components; it does not isolate global `.zcode` business data. New projects and existing projects without an engine selection default to ZCode; Codex projects retain their chosen engine. Codex uses a separate managed home at `<ZCode data base>/.zcode/codex-home`, preserving the separately installed Codex's configuration. Both Codex **Sync with ZCode** switches default off and can be enabled manually below. Keeping original ZCode paths does not automatically synchronize those resources into Codex.
+
 ### Create a Codex project
 
 1. Open this fork's desktop client containing the required feature and configure an OpenAI Responses-compatible API provider, API key and model in ZCode, or sign in with ChatGPT as described below.
@@ -59,35 +65,51 @@ In the modified desktop, open **Settings → Agent capabilities → Subagents �
 
 It defaults off. Enabling it lets Codex delegate independent work when useful; it does not set a concurrency count or guarantee agents on every turn. With it off, explicit instructions can still request delegation, for example: “Spawn two subagents to review the frontend and backend separately.” The saved setting applies on the **next turn** to Codex sessions executing on that computer, including connected Web/mobile sessions. Click the composer's **robot button** to view background agents and open their read-only child-session details.
 
+### Codex MCP and skill sources (Preview 4)
+
+Open **Settings → Agent capabilities → Codex integration**. MCP and skills have independent **Sync with ZCode** switches, both off by default. With sync off, enter an absolute Codex TOML file path for MCP, or absolute skill directories, one per line. Blank values retain native discovery in Codex's managed home; the separate Codex installation is unchanged. Only the TOML file's MCP section is imported.
+
+With MCP sync on, a service list appears. Compatible, enabled and trusted entries default on and can be unchecked; incompatible entries are automatically off with a reason and no longer block the conversation. Skill sync also shows a selectable list with names, sources and paths: enabled skills default on, disabled skills remain off, and same-name skills are controlled independently by path. Turning synchronization off retains selections. Selection affects only Codex, preserving ZCode's MCP and skill enabled state. Internal ZCode host tools are excluded. Custom paths remain saved but are ignored. This projects resources at runtime without copying files or overwriting either configuration. Save changes to apply them on the next turn; in-flight replies retain their snapshot. Paths belong to the executing computer. Compatibility checks configuration support, not connection success; invalid custom paths and real connection failures still report errors. A skill still requires its tools to be available to Codex.
+
+MCP and skill lists start collapsed independently. Click each list heading to expand or collapse it and see its resource count. Expanded lists scroll internally so long catalogs keep **Save changes** reachable. Collapsing preserves selections.
+
+Existing Codex sessions show selected available skills in the skill picker. Packages remain selectable and invocable when their MCP dependencies are incompatible, disabled or unsynchronized, with a description warning naming the unavailable MCP servers. Dependent actions may still be unavailable; selecting a package does not enable its MCP. Disabled packages remain hidden and name conflicts remain unselectable. Standard ZCode sessions keep their existing lists. The executing computer supplies the warning, so official Web/mobile sessions connected to an updated desktop can display it without a separate Web deployment; reopen the picker after saving to refresh. New-task drafts without a session engine identity retain the workspace catalog. These pickers do not enumerate Codex's independently configured resources.
+
+These features are planned for `v3.17.1-codex.4`; **Preview 4 is pending publication**. The published `.3` installer does not contain them. The official hosted website gains no new controls; a separately deployed updated Web UI uses the same Host settings.
+
 ### Official Web/mobile limitations
 
 The current `zcode.z.ai/remote/v4` frontend is hosted by the official website. Installing this fork's desktop client does not replace it. Its existing settings page does not gain this fork's new controls.
 
-| Operation | Modified desktop | Current official Web/mobile frontend |
-| --- | --- | --- |
-| Select Codex when creating a project | Available under Execution engine | No branch selector; cannot create a Codex project through that entry |
-| Change an existing project's execution method | Unsupported; fixed at creation | Unsupported |
-| Change automatic Codex delegation | Available under Codex collaboration | No switch; configure it on the executing computer |
-| Sign in to or out of ChatGPT subscription | Dedicated Manage Models entry in the updated client | No new card on the official website; manage it on the computer. Updated Web source requires a separate deployment |
-| Edit ChatGPT subscription model definitions or connections | Officially managed; read-only | Unsupported; the computer rejects incompatible edits and preserves the configuration |
-| Continue an existing Codex project's sessions | Supported | Supported when connected to the modified desktop; new tasks inside that project inherit Codex |
-| Use the desktop's saved delegation setting | Applied next turn | Applied next turn without a separate Web setting |
+| Operation                                                  | Modified desktop                                    | Current official Web/mobile frontend                                                                              |
+| ---------------------------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Select Codex when creating a project                       | Available under Execution engine                    | No branch selector; cannot create a Codex project through that entry                                              |
+| Change an existing project's execution method              | Unsupported; fixed at creation                      | Unsupported                                                                                                       |
+| Change automatic Codex delegation                          | Available under Codex collaboration                 | No switch; configure it on the executing computer                                                                 |
+| Sign in to or out of ChatGPT subscription                  | Dedicated Manage Models entry in the updated client | No new card on the official website; manage it on the computer. Updated Web source requires a separate deployment |
+| Edit ChatGPT subscription model definitions or connections | Officially managed; read-only                       | Unsupported; the computer rejects incompatible edits and preserves the configuration                              |
+| Continue an existing Codex project's sessions              | Supported                                           | Supported when connected to the modified desktop; new tasks inside that project inherit Codex                     |
+| Use the desktop's saved delegation setting                 | Applied next turn                                   | Applied next turn without a separate Web setting                                                                  |
 
 Create the Codex project and save delegation settings **on the desktop first**, then open that project on Web/mobile to continue. The branch's source Web UI includes the new controls, but needs a separate deployment; no hosted modified-Web URL is currently provided.
 
 ### Platform packages
 
-**[Download the new complete Windows x64 EXE installer](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.3/ZCode-Codex-3.17.1-preview.3-win-x64.exe)** · [SHA256 manifest](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.3/SHA256SUMS-win-x64.txt) · [New release notes](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.3) · [Older macOS/Linux packages](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.2)
+**Preview 4 (`v3.17.1-codex.4`) is pending publication**: [planned complete Windows x64 EXE URL](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.4/ZCode-Codex-3.17.1-preview.4-win-x64.exe). This link is unavailable until the actual upload. Installer size and SHA256 will be recorded after the build, upload and verification.
 
-| Platform | Source packaging targets | Formats | Branch validation |
-| --- | --- | --- | --- |
-| Windows | x64, arm64 | `.exe` installer | x64 `.3` rebuilt and published; clean-machine installation awaits acceptance; arm64 unpublished |
-| macOS | Apple Silicon arm64, Intel x64 | `.dmg`, `.zip` | Older `.2` published for both architectures; `.3` builds queued; actual desktop runtime awaits acceptance |
-| Linux | x64, arm64 | `.AppImage`, `.deb`, `.rpm`, `.pkg.tar.zst` | Older `.2` published in all four x64 formats; `.3` builds queued; arm64 builds and actual desktop runtime await acceptance |
+Currently published: [Preview 3 complete Windows x64 EXE](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.3/ZCode-Codex-3.17.1-preview.3-win-x64.exe) · [Preview 3 SHA256 manifest](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.3/SHA256SUMS-win-x64.txt) · [Preview 3 release notes](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.3) · [Preview 2 macOS/Linux packages](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.2)
 
-Download the actual attachments in this fork's [Releases](https://github.com/e0gd/ZCode-Codex/releases). No attachments means no published package; upstream installers do not contain this integration. Source commands appear below under Packaging. Codex is not bundled. To build a Preview application alongside the original while using the production backend, set `ZCODE_ENV=production` and `ZCODE_PREVIEW_IDENTITY=1`. Renaming the repository does not migrate application data or change an existing local installation's independent data.
+| Platform | Source packaging targets       | Formats                                     | Branch validation                                                                                                          |
+| -------- | ------------------------------ | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Windows  | x64, arm64                     | `.exe` installer                            | x64 `.4` pending publication, `.3` published; clean-machine installation awaits acceptance; arm64 unpublished             |
+| macOS    | Apple Silicon arm64, Intel x64 | `.dmg`, `.zip`                              | `.2` published for both architectures; `.4` unpublished; actual desktop runtime awaits acceptance                          |
+| Linux    | x64, arm64                     | `.AppImage`, `.deb`, `.rpm`, `.pkg.tar.zst` | `.2` published in all four x64 formats; `.4` unpublished; arm64 and actual desktop runtime await acceptance                |
 
-New preview: [v3.17.1-codex.3](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.3); platform availability depends on its actual attachments. **Windows x64 downloads are complete `.exe` installers**. Start the installed application from its icon or executable; PowerShell is unnecessary. The installed application is named **ZCode Preview**. Packages are unsigned and macOS builds are not notarized. Platform-specific SHA256 manifests are included. Exit and reopen the application after updating to activate new code. Previous `.1` and `.2` releases remain available. Follow the [build run](https://github.com/e0gd/ZCode-Codex/actions/runs/41814005983) for queued macOS/Linux builds.
+Download the actual attachments in this fork's [Releases](https://github.com/e0gd/ZCode-Codex/releases). No attachments means no published package; upstream installers do not contain this integration. Source commands appear below under Packaging. Codex is not bundled. To build a Preview application alongside the original while using the production backend, set `ZCODE_ENV=production` and `ZCODE_PREVIEW_IDENTITY=1`; standard user/project paths remain as described above. Renaming the repository does not migrate application data.
+
+**Windows x64 downloads are complete `.exe` installers**. Start the installed application from its icon or executable; PowerShell is unnecessary. The installed application is named **ZCode Preview**. Historical preview packages are unsigned and macOS builds are not notarized. Published platforms include SHA256 manifests. Exit and reopen the application after updating to activate new code. Previous `.1`, `.2` and `.3` downloads and verification records remain in their historical Releases. The Preview 3 macOS/Linux build record is [run 41814005983](https://github.com/e0gd/ZCode-Codex/actions/runs/41814005983).
+
+**Preview 4 changes (pending publication)**: per-server/per-skill Codex synchronization with collapsible lists; selectable packages with warnings naming unavailable MCP dependencies; MCP configuration errors naming the server and reason; bounded Codex notification count/memory; and abandoned process-lock recovery only after both the recorded owner and children are confirmed absent. Synchronization remains off by default and standard installation keeps the original ZCode paths.
 
 The Windows `.3` installer comes from `c462acd5`, contains the title, encoded-input and browser-login fixes, and is 198,640,213 bytes. SHA256: `cbd7d82c07a31a800b0cd49df788563ee94378e41db9fa3165107d9ee0edf949`. These fixes are absent from `.2` packages.
 
@@ -95,7 +117,8 @@ Use [Actions → Desktop packages](https://github.com/e0gd/ZCode-Codex/actions/w
 
 ## Updates
 
-- **2026-11-04 Preview 3**: Rebuilt and published the complete Windows x64 EXE with summarized Codex session titles (`c40d750a`), decoded `c2a-msg-v1:` child input/labels/cards (`12d30272`), and desktop browser OAuth with clearer device failures (`01a569d0`). macOS/Linux builds remain queued. Official regional restrictions and real-account validation limits still apply. Standard Windows packages use the same seven 16–256 px, 32-bit icon frames as upstream; the low-resolution custom launcher icon affected local portable shortcuts only and was corrected locally, outside Git and Release artifacts.
+- **2026-11-05 Preview 4 (pending publication)**: Preparing the complete `v3.17.1-codex.4` installer with selectable Codex MCP/skill synchronization, independent collapsible lists, missing-MCP package warnings, named configuration errors, notification memory limits and abandoned-lock recovery after process absence checks. Standard installation keeps the system user/original MCP and skill paths; Codex retains its separate managed home and synchronization defaults off. Publication will be recorded after the build, upload and digest checks.
+- **2026-11-04 Preview 3**: Rebuilt and published the complete Windows x64 EXE with summarized Codex session titles (`c40d750a`), decoded `c2a-msg-v1:` child input/labels/cards (`12d30272`), and desktop browser OAuth with clearer device failures (`01a569d0`). macOS/Linux builds were still queued at publication. Official regional restrictions and real-account validation limits still apply. Standard Windows packages use the same seven 16–256 px, 32-bit icon frames as upstream; the low-resolution custom launcher icon affected local portable shortcuts only and was corrected locally, outside Git and Release artifacts.
 - **2026-11-04**: Added ChatGPT subscription login and a read-only official model catalog in Manage Models. Fixed official Codex 0.166 child-agent activity, robot-button visibility and background sessions. Child task input and command/tool output now appear while tasks are running. Updated platform downloads and release verification.
 - **2026-11-03**: Project engines, images, structured questions, automatic delegation setting and native child-agent visibility; fixed Host rejection of free-text questions.
 - **2026-10-30**: Updated to ZCode v3.17.1.

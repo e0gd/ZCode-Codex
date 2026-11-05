@@ -1,11 +1,13 @@
 // Composer Skill 只读 catalog。
 // 与 Skills Settings 管理接口分离：这里的 sessionId 决定 authority，不提供启停/删除能力。
 import {
+  getCodexSkillPathKey,
   zcodeSkillsReferenceCatalogParamsSchema,
   type ZCodeSkillReferenceCatalogEntry,
   type ZCodeSkillsReferenceCatalogResult,
 } from "@zcode/shared";
 import type { SkillLoadOutcome, SkillMetadata } from "@zcode/contracts";
+import type { NativeCodexResourceSnapshot } from "@zcode/adapters/native-codex";
 import { listZCodeSkills } from "../skills.js";
 import {
   parseParams,
@@ -20,8 +22,24 @@ export async function getSkillReferenceCatalog(
   const params = parseParams(zcodeSkillsReferenceCatalogParamsSchema, rawParams);
   if (params.sessionId) {
     const record = requireSession(context, params.sessionId);
+    const resources = await readCodexPickerResources(record);
+    if (resources && !resources.preferences.codexSyncSkills)
+      return { authority: "session", skills: [] };
     const outcome = await record.app.getSkillCatalog();
-    return toResult("session", outcome);
+    const selected = resources
+      ? new Set(resources.skillPaths?.map(getCodexSkillPathKey))
+      : undefined;
+    return toResult(
+      "session",
+      selected
+        ? {
+            ...outcome,
+            skills: outcome.skills.filter((skill) =>
+              selected.has(getCodexSkillPathKey(skill.path)),
+            ),
+          }
+        : outcome,
+    );
   }
 
   // 旧 UI cache 只在 workspace 首次挂载时扫描，用户从文件系统手动新增
@@ -34,6 +52,16 @@ export async function getSkillReferenceCatalog(
     workingDirectory: params.workspace.workspacePath,
   });
   return toResult("workspace", outcome);
+}
+
+/** Normal ZCode keeps its frozen catalog; Codex reads the next-turn resource owner each time. */
+export async function readCodexPickerResources(
+  record: import("./server-types.js").ZCodeProtocolSessionRecord,
+): Promise<NativeCodexResourceSnapshot | undefined> {
+  if (!record.app.runtime?.nativeTurnExecutor) return undefined;
+  if (!record.app.getNativeCodexResourceSnapshot)
+    throw new Error("Update the executing Codex runtime to read selected resources.");
+  return await record.app.getNativeCodexResourceSnapshot();
 }
 
 function toResult(

@@ -15,7 +15,7 @@ import type {
   SkillsListResult,
   SkillsCapability,
 } from "@zcode/shared";
-import { DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS } from "@zcode/shared";
+import { DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS, codexSkillSyncCandidateSchema } from "@zcode/shared";
 import type { ISkillsService } from "./skills.js";
 import { SKILL_FILE_NAME, walkSkillMarkdownPaths } from "./skillDiscoveryWalk.js";
 import { readInstalledPluginRoots } from "#src/plugins/installedPluginRoots.js";
@@ -1026,6 +1026,19 @@ export function createSkillsService(options?: SkillsServiceOptions): ISkillsServ
   let writeQueue = Promise.resolve();
 
   return {
+    async listCodexSyncCandidates(params) {
+      const { skills } = await this.list(params);
+      // 与原技能发现/启停共用唯一 owner，列表只传元数据，不能把技能正文送进设置页。
+      return skills.map((skill) =>
+        codexSkillSyncCandidateSchema.parse({
+          name: skill.name,
+          path: skill.path,
+          scope: skill.scope,
+          enabled: skill.enabled !== false,
+          ...(skill.pluginName ? { pluginName: skill.pluginName } : {}),
+        }),
+      );
+    },
     async list(params: {
       workspacePath: string;
       workspaceIdentity?: string;

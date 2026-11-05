@@ -1,12 +1,13 @@
 /* oxlint-disable eslint(max-lines) -- settings helper 聚合多个设置分组；终端、网络与自动归档多侧能力暂时超过行数限制。 */
 import type {
+  AppSettings,
   AppToolSearchMode,
   IntegratedTerminalShellOption,
   IntegratedTerminalShellSelection,
   LocalePreference,
   ZCodeInteractionBehavior,
 } from "@zcode/shared";
-import { appToolSearchModeSchema } from "@zcode/shared";
+import { appToolSearchModeSchema, getCodexSkillPathKey } from "@zcode/shared";
 import {
   TID_SETTINGS_ASK_USER_QUESTION_AUTO_RESOLUTION_SWITCH,
   TID_SETTINGS_NATIVE_SEARCH_SWITCH,
@@ -14,6 +15,7 @@ import {
   TID_SETTINGS_TOOL_SEARCH_OPTION,
 } from "@zcode/shared/test-ids";
 import { useState, useCallback, useEffect } from "react";
+import { ChevronRight } from "lucide-react";
 import type { IPlatformService } from "@zcode/shared";
 import {
   TID_SETTINGS_LOCALE_SELECT_ITEM,
@@ -29,11 +31,21 @@ import {
 } from "@/components/ui/select.js";
 import { Switch } from "@/components/ui/switch.js";
 import { Input } from "@/components/ui/input.js";
+import { SettingsFormTextarea } from "@/settings/SettingsFormTextarea.js";
 import { Button } from "@/components/ui/button.js";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible.js";
 import { SettingsBadge, SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
 import { DataBaseDirControl } from "@/settings/DataBaseDirControl.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useOptionalServices } from "@/hooks/useServices.js";
+import {
+  useCodexMcpSyncCandidates,
+  useCodexSkillSyncCandidates,
+} from "@/hooks/useEnsureWorkspaceMcpLoaded.js";
 import { ProactiveSuggestionsSetting } from "@/settings/ProactiveSuggestionsSetting.js";
 import { DynamicWorkflowModeSetting } from "@/settings/DynamicWorkflowModeSetting.js";
 import { normalizeInterfaceMode, type InterfaceMode } from "@/lib/interfaceMode.js";
@@ -108,6 +120,520 @@ export function CodexSubagentsSettings({
           {intl.formatMessage({ id: "settings.codex.saveFailed" })}
         </p>
       ) : null}
+    </section>
+  );
+}
+
+type CodexResourcePreferences = Pick<
+  AppSettings,
+  | "codexMcpConfigPath"
+  | "codexSkillRoots"
+  | "codexSyncMcp"
+  | "codexSyncSkills"
+  | "codexMcpDisabledServers"
+  | "codexSkillDisabledPaths"
+>;
+const CODEX_RESOURCE_PATH_MAX_LENGTH = 4096;
+const CODEX_SKILL_ROOT_MAX_COUNT = 32;
+// 同步资源可能有数百项；限制列表高度，避免把保存操作推到长页面末尾。
+const CODEX_RESOURCE_CATALOG_LIST_CLASSNAME =
+  "max-h-72 overflow-y-auto overscroll-contain divide-y divide-border pr-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused";
+
+export function CodexResourcesSettings({
+  settings,
+  onSave,
+  workspacePath,
+  workspaceIdentity,
+}: {
+  settings: CodexResourcePreferences | null;
+  onSave: (patch: CodexResourcePreferences) => Promise<void>;
+  workspacePath?: string;
+  workspaceIdentity?: string;
+}) {
+  const { intl } = useZCodeIntl();
+  const [mcpPath, setMcpPath] = useState("");
+  const [skillDirectories, setSkillDirectories] = useState("");
+  const [syncMcp, setSyncMcp] = useState(false);
+  const [syncSkills, setSyncSkills] = useState(false);
+  const [disabledServers, setDisabledServers] = useState<string[]>([]);
+  const [disabledSkillPaths, setDisabledSkillPaths] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const storedMcpPath = settings?.codexMcpConfigPath ?? "";
+  const storedSkillDirectories = (settings?.codexSkillRoots ?? []).join("\n");
+  const storedSyncMcp = settings?.codexSyncMcp === true;
+  const storedSyncSkills = settings?.codexSyncSkills === true;
+  const storedDisabledServers = JSON.stringify(settings?.codexMcpDisabledServers ?? []);
+  const storedDisabledSkillPaths = JSON.stringify(settings?.codexSkillDisabledPaths ?? []);
+  const catalog = useCodexMcpSyncCandidates(syncMcp, workspacePath, workspaceIdentity);
+  const skillCatalog = useCodexSkillSyncCandidates(syncSkills, workspacePath, workspaceIdentity);
+  const disabledSkillKeys = new Set(disabledSkillPaths.map(getCodexSkillPathKey));
+  useEffect(() => {
+    // 只跟随资源权威字段，避免其他设置广播清掉未提交的路径和 MCP 选择草稿。
+    setMcpPath(storedMcpPath);
+    setSkillDirectories(storedSkillDirectories);
+    setSyncMcp(storedSyncMcp);
+    setSyncSkills(storedSyncSkills);
+    setDisabledServers(JSON.parse(storedDisabledServers) as string[]);
+    setDisabledSkillPaths(JSON.parse(storedDisabledSkillPaths) as string[]);
+  }, [
+    storedMcpPath,
+    storedSkillDirectories,
+    storedSyncMcp,
+    storedSyncSkills,
+    storedDisabledServers,
+    storedDisabledSkillPaths,
+  ]);
+  const skillRoots = [
+    ...new Set(
+      skillDirectories
+        .split(/\r?\n/)
+        .map((path) => path.trim())
+        .filter(Boolean),
+    ),
+  ];
+  const invalidSkills =
+    skillRoots.length > CODEX_SKILL_ROOT_MAX_COUNT ||
+    skillRoots.some((path) => path.length > CODEX_RESOURCE_PATH_MAX_LENGTH);
+  const unavailable = !settings || saving;
+  const edited = () => {
+    setFailed(false);
+    setSaved(false);
+  };
+  const save = async () => {
+    setSaving(true);
+    setFailed(false);
+    setSaved(false);
+    try {
+      await onSave({
+        codexMcpConfigPath: mcpPath.trim(),
+        codexSkillRoots: skillRoots,
+        codexSyncMcp: syncMcp,
+        codexSyncSkills: syncSkills,
+        codexMcpDisabledServers: disabledServers,
+        codexSkillDisabledPaths: disabledSkillPaths,
+      });
+      setSaved(true);
+    } catch {
+      setFailed(true);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <section
+      className="min-w-0 space-y-4"
+      aria-label={intl.formatMessage({ id: "settings.codex.resources.title" })}
+    >
+      <p className="text-ui-base leading-6 text-foreground-subtle">
+        {intl.formatMessage({ id: "settings.codex.resources.description" })}
+      </p>
+      <SettingsGroupCard>
+        <SettingsRow
+          controlLayout="wide"
+          label={intl.formatMessage({ id: "settings.codex.resources.mcpSync" })}
+          description={intl.formatMessage({ id: "settings.codex.resources.mcpSyncDescription" })}
+          control={
+            <Switch
+              data-testid="codex-sync-mcp"
+              className="data-[state=checked]:bg-primary [&[data-state=checked]_[data-slot=switch-thumb]]:translate-x-[calc(100%-2px)]"
+              aria-label={intl.formatMessage({ id: "settings.codex.resources.mcpSync" })}
+              checked={syncMcp}
+              disabled={unavailable}
+              onCheckedChange={(value) => {
+                edited();
+                setSyncMcp(value);
+              }}
+            />
+          }
+        />
+        {syncMcp ? (
+          <Collapsible className="border-t border-border px-4 py-3" data-testid="codex-mcp-catalog">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="min-w-0 flex-1 text-ui-base font-medium text-foreground">
+                <CollapsibleTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="group h-auto min-h-9 w-full justify-start gap-2 whitespace-normal px-0 text-left"
+                    data-testid="codex-mcp-catalog-toggle"
+                  >
+                    <ChevronRight
+                      className="size-4 transition-transform group-data-[state=open]:rotate-90"
+                      aria-hidden="true"
+                    />
+                    <span>{intl.formatMessage({ id: "settings.codex.resources.mcpList" })}</span>
+                    {catalog.status === "ready" ? (
+                      <span className="text-foreground-subtle">({catalog.candidates.length})</span>
+                    ) : null}
+                  </Button>
+                </CollapsibleTrigger>
+              </h3>
+              {catalog.status === "ready" ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  data-testid="codex-mcp-catalog-refresh"
+                  disabled={unavailable}
+                  onClick={catalog.reload}
+                >
+                  {intl.formatMessage({ id: "settings.codex.resources.mcpRefresh" })}
+                </Button>
+              ) : null}
+            </div>
+            <CollapsibleContent>
+              <div className="space-y-3 pt-3">
+                <p className="text-ui-sm leading-5 text-foreground-subtle">
+                  {intl.formatMessage({ id: "settings.codex.resources.mcpListDescription" })}
+                </p>
+                {catalog.status === "loading" ? (
+                  <p
+                    className="text-ui-sm text-foreground-subtle"
+                    data-testid="codex-mcp-catalog-loading"
+                  >
+                    {intl.formatMessage({ id: "settings.codex.resources.mcpLoading" })}
+                  </p>
+                ) : catalog.status === "unavailable" ? (
+                  <p
+                    className="text-ui-sm text-foreground-subtle"
+                    data-testid="codex-mcp-catalog-unavailable"
+                  >
+                    {intl.formatMessage({ id: "settings.codex.resources.mcpUnavailable" })}
+                  </p>
+                ) : catalog.status === "error" ? (
+                  <div className="space-y-2" data-testid="codex-mcp-catalog-error">
+                    <p role="alert" className="text-ui-sm text-foreground">
+                      {intl.formatMessage({ id: "settings.codex.resources.mcpLoadFailed" })}
+                    </p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      data-testid="codex-mcp-catalog-retry"
+                      onClick={catalog.reload}
+                    >
+                      {intl.formatMessage({ id: "settings.codex.resources.mcpRetry" })}
+                    </Button>
+                  </div>
+                ) : catalog.candidates.length === 0 ? (
+                  <p
+                    className="text-ui-sm text-foreground-subtle"
+                    data-testid="codex-mcp-catalog-empty"
+                  >
+                    {intl.formatMessage({ id: "settings.codex.resources.mcpEmpty" })}
+                  </p>
+                ) : (
+                  <div
+                    className={CODEX_RESOURCE_CATALOG_LIST_CLASSNAME}
+                    data-testid="codex-mcp-catalog-list"
+                    role="region"
+                    aria-label={intl.formatMessage({ id: "settings.codex.resources.mcpList" })}
+                    tabIndex={0}
+                  >
+                    {catalog.candidates.map((candidate) => {
+                      const selectable = candidate.compatible && candidate.enabled;
+                      const reason =
+                        candidate.reason ??
+                        (!candidate.enabled
+                          ? "disabled"
+                          : candidate.compatible
+                            ? "compatible"
+                            : "invalid_config");
+                      return (
+                        <div
+                          key={candidate.name}
+                          className="flex min-w-0 items-start justify-between gap-3 py-3"
+                        >
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <p className="break-all text-ui-base font-medium text-foreground">
+                              {candidate.name}
+                            </p>
+                            <p className="text-ui-sm leading-5 text-foreground-subtle">
+                              {intl.formatMessage({
+                                id: `settings.codex.resources.mcpReason.${reason}`,
+                              })}
+                            </p>
+                          </div>
+                          <Switch
+                            data-testid="codex-mcp-candidate"
+                            data-name={candidate.name}
+                            className="mt-0.5 shrink-0 data-[state=checked]:bg-primary [&[data-state=checked]_[data-slot=switch-thumb]]:translate-x-[calc(100%-2px)]"
+                            checked={selectable && !disabledServers.includes(candidate.name)}
+                            disabled={unavailable || !selectable}
+                            aria-label={intl.formatMessage(
+                              { id: "settings.codex.resources.mcpSelect" },
+                              { name: candidate.name },
+                            )}
+                            onCheckedChange={(value) => {
+                              edited();
+                              setDisabledServers((current) =>
+                                value
+                                  ? current.filter((name) => name !== candidate.name)
+                                  : [...new Set([...current, candidate.name])],
+                              );
+                            }}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        ) : null}
+        <div className="space-y-2 border-t border-border px-4 py-3">
+          <label
+            htmlFor="codex-mcp-config-path"
+            className="text-ui-base font-medium text-foreground"
+          >
+            {intl.formatMessage({ id: "settings.codex.resources.mcpPath" })}
+          </label>
+          <Input
+            id="codex-mcp-config-path"
+            data-testid="codex-mcp-config-path"
+            aria-describedby="codex-mcp-config-description"
+            className="w-full min-w-0 text-mobile-input-safe md:text-ui-base"
+            value={mcpPath}
+            maxLength={CODEX_RESOURCE_PATH_MAX_LENGTH}
+            placeholder={intl.formatMessage({ id: "settings.codex.resources.defaultPath" })}
+            disabled={unavailable || syncMcp}
+            onChange={(event) => {
+              edited();
+              setMcpPath(event.target.value);
+            }}
+          />
+          <p
+            id="codex-mcp-config-description"
+            className="text-ui-sm leading-5 text-foreground-subtle"
+          >
+            {intl.formatMessage({ id: "settings.codex.resources.mcpPathDescription" })}
+          </p>
+        </div>
+      </SettingsGroupCard>
+      <SettingsGroupCard>
+        <SettingsRow
+          controlLayout="wide"
+          label={intl.formatMessage({ id: "settings.codex.resources.skillsSync" })}
+          description={intl.formatMessage({ id: "settings.codex.resources.skillsSyncDescription" })}
+          control={
+            <Switch
+              data-testid="codex-sync-skills"
+              className="data-[state=checked]:bg-primary [&[data-state=checked]_[data-slot=switch-thumb]]:translate-x-[calc(100%-2px)]"
+              aria-label={intl.formatMessage({ id: "settings.codex.resources.skillsSync" })}
+              checked={syncSkills}
+              disabled={unavailable}
+              onCheckedChange={(value) => {
+                edited();
+                setSyncSkills(value);
+              }}
+            />
+          }
+        />
+        {syncSkills ? (
+          <Collapsible
+            className="border-t border-border px-4 py-3"
+            data-testid="codex-skill-catalog"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="min-w-0 flex-1 text-ui-base font-medium text-foreground">
+                <CollapsibleTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="group h-auto min-h-9 w-full justify-start gap-2 whitespace-normal px-0 text-left"
+                    data-testid="codex-skill-catalog-toggle"
+                  >
+                    <ChevronRight
+                      className="size-4 transition-transform group-data-[state=open]:rotate-90"
+                      aria-hidden="true"
+                    />
+                    <span>{intl.formatMessage({ id: "settings.codex.resources.skillList" })}</span>
+                    {skillCatalog.status === "ready" ? (
+                      <span className="text-foreground-subtle">
+                        ({skillCatalog.candidates.length})
+                      </span>
+                    ) : null}
+                  </Button>
+                </CollapsibleTrigger>
+              </h3>
+              {skillCatalog.status === "ready" ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  data-testid="codex-skill-catalog-refresh"
+                  disabled={unavailable}
+                  onClick={skillCatalog.reload}
+                >
+                  {intl.formatMessage({ id: "settings.codex.resources.skillRefresh" })}
+                </Button>
+              ) : null}
+            </div>
+            <CollapsibleContent>
+              <div className="space-y-3 pt-3">
+                <p className="text-ui-sm leading-5 text-foreground-subtle">
+                  {intl.formatMessage({ id: "settings.codex.resources.skillListDescription" })}
+                </p>
+                {skillCatalog.status === "loading" ? (
+                  <p
+                    className="text-ui-sm text-foreground-subtle"
+                    data-testid="codex-skill-catalog-loading"
+                  >
+                    {intl.formatMessage({ id: "settings.codex.resources.skillLoading" })}
+                  </p>
+                ) : skillCatalog.status === "unavailable" ? (
+                  <p
+                    className="text-ui-sm text-foreground-subtle"
+                    data-testid="codex-skill-catalog-unavailable"
+                  >
+                    {intl.formatMessage({ id: "settings.codex.resources.skillUnavailable" })}
+                  </p>
+                ) : skillCatalog.status === "error" ? (
+                  <div className="space-y-2" data-testid="codex-skill-catalog-error">
+                    <p role="alert" className="text-ui-sm text-foreground">
+                      {intl.formatMessage({ id: "settings.codex.resources.skillLoadFailed" })}
+                    </p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      data-testid="codex-skill-catalog-retry"
+                      disabled={unavailable}
+                      onClick={skillCatalog.reload}
+                    >
+                      {intl.formatMessage({ id: "settings.codex.resources.skillRetry" })}
+                    </Button>
+                  </div>
+                ) : skillCatalog.candidates.length === 0 ? (
+                  <p
+                    className="text-ui-sm text-foreground-subtle"
+                    data-testid="codex-skill-catalog-empty"
+                  >
+                    {intl.formatMessage({ id: "settings.codex.resources.skillEmpty" })}
+                  </p>
+                ) : (
+                  <div
+                    className={CODEX_RESOURCE_CATALOG_LIST_CLASSNAME}
+                    data-testid="codex-skill-catalog-list"
+                    role="region"
+                    aria-label={intl.formatMessage({ id: "settings.codex.resources.skillList" })}
+                    tabIndex={0}
+                  >
+                    {skillCatalog.candidates.map((candidate) => {
+                      const candidateKey = getCodexSkillPathKey(candidate.path);
+                      const excluded = disabledSkillKeys.has(candidateKey);
+                      return (
+                        <div
+                          key={candidateKey}
+                          className="flex min-w-0 items-start justify-between gap-3 py-3"
+                        >
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <p className="break-all text-ui-base font-medium text-foreground">
+                              {candidate.name}
+                            </p>
+                            <p className="break-all text-ui-sm leading-5 text-foreground-subtle">
+                              {intl.formatMessage({
+                                id: `settings.codex.resources.skillScope.${candidate.scope}`,
+                              })}
+                              {candidate.pluginName ? ` · ${candidate.pluginName}` : ""}
+                            </p>
+                            <p className="break-all text-ui-sm leading-5 text-foreground-subtle">
+                              {candidate.path}
+                            </p>
+                            {!candidate.enabled ? (
+                              <p className="text-ui-sm leading-5 text-foreground-subtle">
+                                {intl.formatMessage({
+                                  id: "settings.codex.resources.skillDisabled",
+                                })}
+                              </p>
+                            ) : null}
+                          </div>
+                          <Switch
+                            data-testid="codex-skill-candidate"
+                            data-name={candidate.name}
+                            data-path={candidate.path}
+                            className="mt-0.5 shrink-0 data-[state=checked]:bg-primary [&[data-state=checked]_[data-slot=switch-thumb]]:translate-x-[calc(100%-2px)]"
+                            checked={candidate.enabled && !excluded}
+                            disabled={unavailable || !candidate.enabled}
+                            aria-label={intl.formatMessage(
+                              { id: "settings.codex.resources.skillSelect" },
+                              { name: candidate.name, path: candidate.path },
+                            )}
+                            onCheckedChange={(value) => {
+                              edited();
+                              setDisabledSkillPaths((current) =>
+                                value
+                                  ? current.filter(
+                                      (path) => getCodexSkillPathKey(path) !== candidateKey,
+                                    )
+                                  : current.some(
+                                        (path) => getCodexSkillPathKey(path) === candidateKey,
+                                      )
+                                    ? current
+                                    : [...current, candidate.path],
+                              );
+                            }}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        ) : null}
+        <div className="space-y-2 border-t border-border px-4 py-3">
+          <label htmlFor="codex-skill-roots" className="text-ui-base font-medium text-foreground">
+            {intl.formatMessage({ id: "settings.codex.resources.skillRoots" })}
+          </label>
+          <SettingsFormTextarea
+            id="codex-skill-roots"
+            data-testid="codex-skill-roots"
+            aria-describedby="codex-skill-roots-description"
+            aria-invalid={invalidSkills || undefined}
+            rows={3}
+            className="text-mobile-input-safe md:text-ui-base"
+            value={skillDirectories}
+            placeholder={intl.formatMessage({ id: "settings.codex.resources.defaultSkills" })}
+            disabled={unavailable || syncSkills}
+            onChange={(event) => {
+              edited();
+              setSkillDirectories(event.target.value);
+            }}
+          />
+          <p
+            id="codex-skill-roots-description"
+            className="text-ui-sm leading-5 text-foreground-subtle"
+          >
+            {intl.formatMessage({ id: "settings.codex.resources.skillRootsDescription" })}
+          </p>
+        </div>
+      </SettingsGroupCard>
+      <p className="text-ui-sm leading-5 text-foreground-subtle">
+        {intl.formatMessage({ id: "settings.codex.resources.scope" })}
+      </p>
+      {invalidSkills ? (
+        <p role="alert" className="text-ui-sm text-foreground">
+          {intl.formatMessage({ id: "settings.codex.resources.invalidSkills" })}
+        </p>
+      ) : null}
+      {failed ? (
+        <p role="alert" className="text-ui-sm text-foreground">
+          {intl.formatMessage({ id: "settings.codex.resources.saveFailed" })}
+        </p>
+      ) : null}
+      {saved ? (
+        <p role="status" className="text-ui-sm text-foreground-subtle">
+          {intl.formatMessage({ id: "settings.codex.resources.saved" })}
+        </p>
+      ) : null}
+      <Button
+        data-testid="codex-resources-save"
+        disabled={unavailable || invalidSkills}
+        onClick={() => void save()}
+      >
+        {intl.formatMessage({ id: "common.saveChanges" })}
+      </Button>
     </section>
   );
 }

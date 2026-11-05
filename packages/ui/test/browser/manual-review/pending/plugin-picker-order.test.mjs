@@ -116,6 +116,8 @@ for (const [width, locale, theme] of [
   test(`PSO-10/11/14 @/+ ${width}/${locale}/${theme}`, async () => {
     const page = await browser.newPage({ viewport: { width, height: 900 } });
     page.setDefaultTimeout(10000);
+    // 首次导航需等待 Vite 依赖预打包；只扩大编译预算，交互仍受上面的 10 秒限制。
+    page.setDefaultNavigationTimeout(60_000);
     const errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
     const calls = [];
@@ -266,4 +268,83 @@ for (const width of [1200, 390]) {
       });
     }
   }
+}
+
+for (const [width, locale, theme] of [
+  [1200, "en-US", "light"],
+  [390, "zh-CN", "dark"],
+  [1200, "zh-CN", "light"],
+  [390, "en-US", "dark"],
+]) {
+  test(`CODEX-PLUGIN-MCP-WARNING nonblocking @/+ ${width}/${locale}/${theme}`, async () => {
+    const page = await browser.newPage({ viewport: { width, height: 900 } });
+    page.setDefaultTimeout(10000);
+    const errors = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    const warningEn =
+      "⚠ MCP unavailable in Codex: node_repl. You can still select and invoke this package; dependent actions may be unavailable.";
+    const warningZh =
+      "⚠ Codex 中 MCP 不可用：node_repl。仍可选择和调用功能包，依赖此 MCP 的操作可能无法完成。";
+    const warning = locale === "zh-CN" ? warningZh : warningEn;
+    const stableId = `browser-use@${official}`;
+    const canonical = `[@browser-use](plugin://${stableId})`;
+    try {
+      await page.route("**/catalog", (route) =>
+        route.fulfill({
+          json: {
+            authority: "session",
+            plugins: [
+              plugin("browser-use", "developer-tools", {
+                description: `${warningEn} Browser automation.`,
+                descriptionI18n: { "zh-CN": `${warningZh} 浏览器自动化。` },
+                skillQualifiedNames: ["browser-use:control-browser"],
+              }),
+              plugin("conflict", "utilities", {
+                conflictingPluginIds: ["conflict@personal"],
+                description: warningEn,
+                descriptionI18n: { "zh-CN": warningZh },
+              }),
+              plugin("disabled", "utilities", { enabled: false, description: warningEn }),
+            ],
+          },
+        }),
+      );
+      await page.route("**/order", (route) => route.fulfill({ json: config }));
+      await page.goto(`${origin}fixture?locale=${locale}&theme=${theme}`);
+      const editor = page.getByTestId("editor");
+      const available = page.locator(`[role="option"][data-option-id="plugin:${stableId}"]`);
+      const conflict = page.locator(
+        `[role="option"][data-option-id="plugin:conflict@${official}"]`,
+      );
+      await editor.fill("@");
+      await available.waitFor();
+      assert.ok((await available.innerText()).includes(warning));
+      assert.equal(await available.getAttribute("data-disabled"), "false");
+      assert.equal(await conflict.getAttribute("data-disabled"), "true");
+      assert.equal(
+        await page.locator('[data-option-id="plugin:disabled@zcode-plugins-official"]').count(),
+        0,
+      );
+      await mkdir(join(tmpdir(), "zcode-plugin-picker-order"), { recursive: true });
+      await page.screenshot({
+        path: join(tmpdir(), "zcode-plugin-picker-order", `mcp-warning-at-${width}-${locale}.png`),
+      });
+      await available.click();
+      await editor.locator(`[data-mention-id="plugin:${stableId}"]`).waitFor();
+      assert.equal((await page.getByTestId("markdown").textContent()).trim(), canonical);
+
+      await editor.fill("");
+      await page.getByRole("button", { name: "Add", exact: true }).click();
+      await available.waitFor();
+      assert.ok((await available.innerText()).includes(warning));
+      assert.equal(await available.getAttribute("data-disabled"), "false");
+      assert.equal(await conflict.getAttribute("data-disabled"), "true");
+      await available.click();
+      assert.equal(await page.getByTestId("selected").textContent(), stableId);
+      assert.equal(await page.getByTestId("selected-markdown").textContent(), canonical);
+      assert.deepEqual(errors, []);
+    } finally {
+      await page.close();
+    }
+  });
 }

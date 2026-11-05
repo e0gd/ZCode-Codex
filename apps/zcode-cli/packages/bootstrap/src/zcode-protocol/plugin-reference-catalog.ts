@@ -3,6 +3,7 @@
 // 且 plugins.ts 已接近 max-lines 门禁。
 import {
   ZCODE_OFFICIAL_PLUGIN_MARKETPLACE_ID,
+  getCodexSkillPathKey,
   zcodeProtocolNotifications,
   zcodePluginsReferenceCatalogParamsSchema,
   zcodePluginsResolveSuggestedReferenceParamsSchema,
@@ -12,6 +13,7 @@ import {
   type ZCodePluginsResolveSuggestedReferenceResult,
 } from "@zcode/shared";
 import type { PluginReferenceCatalogEntry } from "@zcode/contracts";
+import type { SkillMetadata } from "@zcode/contracts";
 import { buildPluginReferenceCatalog } from "@zcode/core";
 import {
   enrichCachedClaudeMarketplaceIconsForOverview,
@@ -24,6 +26,11 @@ import {
   requireSession,
   type ZCodeProtocolAgentServerContext,
 } from "./server-types.js";
+import { readCodexPickerResources } from "./skill-reference-catalog.js";
+import {
+  describeNativeCodexPluginMcpNames,
+  getNativeCodexPluginMcpAvailability,
+} from "../app/runtime-config.js";
 
 // Picker 权威：带 sessionId → 该 Session 创建时冻结的 identity catalog（session-owned）；
 // 不带 → workspace 当前 catalog（新建草稿）。session 不存在时按协议错误 fail closed，
@@ -36,14 +43,72 @@ export async function getPluginReferenceCatalog(
   const params = parseParams(zcodePluginsReferenceCatalogParamsSchema, rawParams);
   if (params.sessionId) {
     const record = requireSession(context, params.sessionId);
+    const resources = await readCodexPickerResources(record);
+    const unavailableMcpByPluginId = new Map<string, string[]>();
+    let plugins = record.app.getPluginReferenceCatalog().plugins;
+    if (resources) {
+      const selectedPaths = new Set(
+        resources.preferences.codexSyncSkills
+          ? resources.skillPaths?.map(getCodexSkillPathKey)
+          : [],
+      );
+      const skills = selectedPaths.size ? (await record.app.getSkillCatalog()).skills : [];
+      plugins = plugins
+        .filter((entry) => entry.enabled)
+        .map((entry) => {
+          const availability = getNativeCodexPluginMcpAvailability(entry, resources);
+          unavailableMcpByPluginId.set(entry.pluginId, availability.unavailableServerNames);
+          return {
+            ...entry,
+            mcpServerNames: availability.availableServerNames,
+            skillQualifiedNames: entry.skillQualifiedNames.filter((name) =>
+              skills.some(
+                (skill) =>
+                  selectedPaths.has(getCodexSkillPathKey(skill.path)) &&
+                  skillBelongsToPlugin(skill, entry, name),
+              ),
+            ),
+            // ZCode 原生子代理不由 Codex 执行；不能在保留混合插件时继续宣称这些能力。
+            subagentNames: [],
+          };
+        })
+        .filter(
+          (entry) =>
+            entry.mcpServerNames.length > 0 ||
+            entry.skillQualifiedNames.length > 0 ||
+            (unavailableMcpByPluginId.get(entry.pluginId)?.length ?? 0) > 0,
+        );
+    }
     const displayByPluginId = resolveReferenceListingDisplayByPluginId(
       params.workspace.workspacePath,
     );
     return {
       authority: "session",
-      plugins: record.app
-        .getPluginReferenceCatalog()
-        .plugins.map((entry) => toReferenceCatalogEntry(entry, displayByPluginId, includeCategory)),
+      plugins: plugins.map((entry) => {
+        const projected = toReferenceCatalogEntry(entry, displayByPluginId, includeCategory);
+        if (!resources) return projected;
+        const unavailableServerNames = unavailableMcpByPluginId.get(entry.pluginId) ?? [];
+        if (!unavailableServerNames.length) return projected;
+        const names = describeNativeCodexPluginMcpNames(unavailableServerNames);
+        const english = `⚠ MCP unavailable in Codex: ${names}. You can still select and invoke this package; dependent actions may be unavailable.`;
+        const chinese = `⚠ Codex 中 MCP 不可用：${names}。仍可选择和调用功能包，依赖此 MCP 的操作可能无法完成。`;
+        const append = (warning: string, description?: string) =>
+          description ? `${warning} ${description}` : warning;
+        return {
+          ...projected,
+          description: append(english, projected.description),
+          descriptionI18n: {
+            ...Object.fromEntries(
+              Object.entries(projected.descriptionI18n ?? {}).map(([locale, description]) => [
+                locale,
+                append(locale.toLowerCase().startsWith("zh") ? chinese : english, description),
+              ]),
+            ),
+            "en-US": append(english, projected.descriptionI18n?.["en-US"] ?? projected.description),
+            "zh-CN": append(chinese, projected.descriptionI18n?.["zh-CN"] ?? projected.description),
+          },
+        };
+      }),
     };
   }
   const outcome = resolveZCodePlugins({
@@ -58,6 +123,24 @@ export async function getPluginReferenceCatalog(
       toReferenceCatalogEntry(entry, displayByPluginId, includeCategory),
     ),
   };
+}
+
+function skillBelongsToPlugin(
+  skill: SkillMetadata,
+  plugin: PluginReferenceCatalogEntry,
+  qualifiedName: string,
+): boolean {
+  if (
+    skill.source !== "plugin" ||
+    (skill.qualifiedName ?? `${skill.pluginName}:${skill.name}`) !== qualifiedName
+  )
+    return false;
+  if (skill.pluginId) return skill.pluginId === plugin.pluginId;
+  const root = getCodexSkillPathKey(plugin.rootPath).replace(/\/$/u, "");
+  // 旧 metadata 无 pluginId 时必须同时验证名字与目录边界，不能凭同名匹配另一来源。
+  return (
+    skill.pluginName === plugin.name && getCodexSkillPathKey(skill.path).startsWith(`${root}/`)
+  );
 }
 
 const SUGGESTED_PLUGIN_MARKETPLACE = ZCODE_OFFICIAL_PLUGIN_MARKETPLACE_ID;

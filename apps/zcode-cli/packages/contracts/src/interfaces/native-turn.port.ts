@@ -83,6 +83,8 @@ export interface NativeTurnExecutor {
     sessionId: string;
     inputId: string;
     text: string;
+    /** User-authored canonical text before command expansion; empty for model-only continuation. */
+    canonicalInput?: string;
     /** Resolved by Core and persisted with the user message; never browser paths/upload handles. */
     readonly attachments?: readonly ModelMessageContentBlock[];
     signal: AbortSignal;

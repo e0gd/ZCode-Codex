@@ -767,6 +767,7 @@ export async function executeTurnCommand(
           if (failedAttachment) throw new Error(`Native Codex attachment could not be read (${failedAttachment.metadata.errorCode})`);
           const nativeResult = await executeNativeTurn.call(this, {
             text: input, inputId: options?.inputId ?? String(turnId),
+            canonicalInput: options?.inputVisibility === "model-only" ? "" : displayInput,
             attachments: resolvedAttachments.map(attachment => attachment.contentBlock),
             ...(nativeModelSelection ? { modelSelection: nativeModelSelection } : {}),
             signal: turnAbortSignal, traceContext: turnTraceContext,

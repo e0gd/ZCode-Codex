@@ -4,6 +4,18 @@ The repository's manual **Desktop packages** GitHub Actions workflow builds the 
 
 Each job uses the existing `pnpm bundle:desktop` entry, including runtime preparation, desktop/Host/renderer build, packaging and the entry's dependency/size checks. It must not reuse a previously installed desktop archive or copy native assets between operating systems. Production backend configuration and `ZCODE_PREVIEW_IDENTITY=1` produce a Preview application identity that can coexist with the production application. This does not migrate existing user data, rename the application to match the GitHub repository, or isolate it from other Preview installations. Official Codex remains separately installed on the executing computer.
 
+## Standard installer defaults
+
+Public installers preserve the original ZCode user and project paths. A normal launch keeps the operating system user's `HOME` / `USERPROFILE`; existing explicit environment or data-directory overrides keep their existing precedence. ZCode continues to read its MCP configuration under `~/.zcode`, user skills in `~/.zcode/skills` and `~/.agents/skills`, and configuration/skills at the original project paths. Here `~` belongs to the computer executing the session. The package must not include or automatically enable a machine-specific portable launcher that redirects these paths to an independent `Data` directory.
+
+Preview identity changes the installed application identity, Electron profile (`ZCode Preview` rather than `ZCode`) and Preview Helper component directory. It does not redirect the system user home or isolate the global `.zcode` business data. New projects and existing projects without an engine selection default to ZCode; projects created with Codex retain that engine.
+
+Codex uses its own managed home at `<ZCode data base>/.zcode/codex-home`; the user's separate Codex installation keeps its configuration. **Sync MCP with ZCode** and **Sync skills with ZCode** are independent and default off. Users may enable them and select resources under **Settings → Agent capabilities → Codex integration**. Sharing the original ZCode discovery paths does not implicitly synchronize those resources into Codex. Automatic Codex subagent delegation also remains off by default. Resource choices follow the [Codex resource specification](../specs/codex-resources.md).
+
+Release acceptance must inspect the packaged entry and compiled defaults: no bundled home/data-redirection launcher; original user/project discovery paths; a separate Codex managed home; both resource-sync switches and automatic delegation initially off. Verify selected synchronization on a later turn without modifying the original MCP configuration, skill files or separate Codex configuration. These requirements describe the expected package behavior; they are not a claim that a clean-machine installation has passed.
+
+## Build and publication
+
 Windows runners must resolve the native System32 `tar.exe` before Git Bash's GNU tar: GNU tar interprets a cross-drive cache path such as `D:/...` as a remote host and fails while extracting bundled npm. Copy only `tar.exe` into a temporary tools directory and prepend that directory; prepending all of System32 also selects its WSL `bash.exe` and breaks Bash steps. Dependency lifecycle scripts run serially to reduce competing native/postinstall work in the hoisted workspace. The initial Linux dependency installation failed with a pnpm temporary-directory rename error; a successful subsequent run is required before claiming Linux packages exist.
 
 Successful jobs upload installers/archives and a SHA256 manifest as Actions artifacts for 14 days. A missing installer is a failure. Failed targets do not prevent independent targets from completing. The workflow does not publish to upstream/CDN feeds, automatically update installed apps, or create a GitHub Release. Published downloads require a separate release containing actual successful artifacts. The initial builds are unsigned and macOS artifacts are not notarized.
@@ -17,6 +29,20 @@ After verifying the artifact manifest, publishing normalizes package filename sp
 It may be dispatched while the source run is still active: it waits up to 30 minutes for the chosen artifact, then fails if the run finishes without it or the wait expires. Missing/failed targets are never published as successful. Windows x64 was packaged locally from the previously validated complete desktop; both macOS architectures were built in run `41642627089` and promoted through checksum-verifying jobs. Linux x64 succeeded in retry run `41645155986`; all four formats were published by run `41647422026` after SHA256 verification. Windows/macOS/Linux packages are available in the preview release. Windows hosted-runner failures are not reported as successful CI builds: the published Windows installer comes from the local packaging run. macOS/Linux runtime acceptance on real desktops remains unperformed, and Windows/Linux arm64 packages are not published.
 
 ## Run and download
+
+### Preview 4 (2026-11-05, pending publication)
+
+The planned release is `v3.17.1-codex.4`. Its Windows x64 complete NSIS installer is expected to be named `ZCode-Codex-3.17.1-preview.4-win-x64.exe`. The [planned installer URL](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.4/ZCode-Codex-3.17.1-preview.4-win-x64.exe) is reserved for that release and is not evidence that an asset is available. At this documentation stage, Preview 4 has not been published; no installer size, source commit or SHA256 digest is claimed. Preview 3 Windows and Preview 2 macOS/Linux downloads below remain the published historical packages.
+
+Preview 4 is intended to include the following changes, in addition to Preview 3:
+
+- Preserve the standard installer defaults above, including original ZCode MCP/skill discovery and independent, initially disabled Codex synchronization.
+- Select MCP servers and skills independently for Codex, with retained per-resource choices and independently collapsed, internally scrolling lists.
+- Keep enabled packages selectable when their MCP dependencies are incompatible, disabled or unsynchronized, while naming unavailable dependencies in a non-blocking warning. Invocation does not enable missing MCP servers.
+- Identify rejected MCP configuration by a bounded, escaped server name and a specific reason without exposing configuration values.
+- Bound pending Codex notification delivery by count and bytes, failing explicitly on overflow without replaying the input. Recover an abandoned process lock only when both its recorded owner and native children are confirmed absent; an uncertain lock remains blocked.
+
+Publication requires a fresh complete package from the final committed source. Record that immutable source commit, successful bundle gates, exact installer size, local SHA256, matching Release asset digest and matching public manifest filenames after the actual build/upload. Do not reuse the Preview 3 installer or a machine's portable launcher as Preview 4. Record platform build results and runtime acceptance separately; no new macOS/Linux or arm64 package availability is asserted here.
 
 ### Preview 3 (2026-11-04)
 

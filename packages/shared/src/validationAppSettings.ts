@@ -1,6 +1,12 @@
 /* oxlint-disable eslint(max-lines) -- AppSettings schema 聚合历史迁移、默认值和 patch 校验，拆分会削弱设置迁移的单一入口。 */
 import { z } from "zod";
-import { appToolSearchModeSchema } from "./app-runtime-preferences.js";
+import {
+  appToolSearchModeSchema,
+  codexResourcePathSchema,
+  codexSkillRootsSchema,
+  codexSkillDisabledPathsSchema,
+  codexMcpDisabledServersSchema,
+} from "./app-runtime-preferences.js";
 import type { AppSettings } from "./protocol.js";
 import { REMOTE_ASSET_INSTALL_MODES } from "./remoteAssetInstallMode.js";
 import { isKnownRemoteResourcePackageId } from "./remoteResourcePackages.js";
@@ -556,6 +562,12 @@ const appSettingsObjectSchema = z.object({
   proactiveSuggestionsEnabled: z.boolean().optional(),
   memoryEnabled: z.boolean().default(false),
   codexAutoSubagentsEnabled: z.boolean().default(false),
+  codexMcpConfigPath: codexResourcePathSchema.default(""),
+  codexSkillRoots: codexSkillRootsSchema.default([]),
+  codexSyncMcp: z.boolean().default(false),
+  codexMcpDisabledServers: codexMcpDisabledServersSchema.default([]),
+  codexSyncSkills: z.boolean().default(false),
+  codexSkillDisabledPaths: codexSkillDisabledPathsSchema.default([]),
   lastWorkspaceSession: z.array(appWorkspaceSessionEntrySchema).default([]),
   lastActiveWorkspace: appWorkspaceSessionEntrySchema.nullable().optional(),
   remoteConversationWorkspaceBySourceServerId: z
@@ -669,6 +681,12 @@ export const appSettingsPatchSchema = z.object({
   proactiveSuggestionsEnabled: z.boolean().optional(),
   memoryEnabled: z.boolean().optional(),
   codexAutoSubagentsEnabled: z.boolean().optional(),
+  codexMcpConfigPath: codexResourcePathSchema.optional(),
+  codexSkillRoots: codexSkillRootsSchema.optional(),
+  codexSyncMcp: z.boolean().optional(),
+  codexMcpDisabledServers: codexMcpDisabledServersSchema.optional(),
+  codexSyncSkills: z.boolean().optional(),
+  codexSkillDisabledPaths: codexSkillDisabledPathsSchema.optional(),
   lastWorkspaceSession: z.array(appWorkspaceSessionEntrySchema).optional(),
   lastActiveWorkspace: appWorkspaceSessionEntrySchema.nullable().optional(),
   remoteConversationWorkspaceBySourceServerId: z

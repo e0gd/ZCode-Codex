@@ -4,7 +4,9 @@ import { LexicalComposer } from "@lexical/react/LexicalComposer";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
 import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
+import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { MentionPlugin } from "@/mentions/MentionPlugin.js";
+import { $getPromptMarkdown } from "@/mentions/promptSerialization.js";
 import { PromptMentionNode } from "@/mentions/nodes/PromptMentionNode.js";
 import { ChatPromptActionMenu } from "@/prompt-editor/ChatPromptActionMenu.js";
 import type { LexicalChatInputHandle } from "@/LexicalChatInput.js";
@@ -43,11 +45,16 @@ function Fixture() {
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
   const [sessionId, setSessionId] = useState<string | null>("frozen-session");
   const [selected, setSelected] = useState("");
+  const [selectedMarkdown, setSelectedMarkdown] = useState("");
+  const [markdown, setMarkdown] = useState("");
   const input = useRef({
     getText: () => "",
     focus: () => document.querySelector<HTMLElement>('[data-testid="editor"]')?.focus(),
     getEditorState: () => undefined,
-    insertMention: (item: { value: string }) => setSelected(item.value),
+    insertMention: (item: { value: string; markdown: string }) => {
+      setSelected(item.value);
+      setSelectedMarkdown(item.markdown);
+    },
   } as unknown as LexicalChatInputHandle);
   return (
     <main className="min-h-screen bg-background p-4 text-foreground">
@@ -61,6 +68,8 @@ function Fixture() {
         Draft
       </button>
       <output data-testid="selected">{selected}</output>
+      <output data-testid="selected-markdown">{selectedMarkdown}</output>
+      <output data-testid="markdown">{markdown}</output>
       <div ref={setContainer} className="mt-80 w-full">
         <LexicalComposer
           initialConfig={{
@@ -77,6 +86,9 @@ function Fixture() {
             }
             placeholder={null}
             ErrorBoundary={LexicalErrorBoundary}
+          />
+          <OnChangePlugin
+            onChange={(editorState) => setMarkdown(editorState.read(() => $getPromptMarkdown()))}
           />
           <MentionPlugin
             workspacePath="/fixture"

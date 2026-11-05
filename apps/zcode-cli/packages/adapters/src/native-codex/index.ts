@@ -6,11 +6,15 @@ import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ModelSelection, NativeCodexModelConfig, NativeCodexModelResolver, NativeCodexReasoningEffort, NativeTurnApproval, NativeTurnEvent, NativeTurnExecutor } from "@zcode/contracts";
 import type { Provider, ProviderModel } from "@zcode/provider";
 import { compileModelOptionMap } from "@zcode/model-option-map";
-import { CodexConnection, NativeChildObserver, nativeToolName, nativeToolInput, nativeToolOutput, identifier, record, type NativeChildRelation, type RpcMessage } from "./connection.js";
+import { CodexConnection, NativeChildObserver, NativeNotificationBudget, nativeToolName, nativeToolInput, nativeToolOutput, identifier, record, type NativeChildRelation, type PendingNativeNotification, type RpcMessage } from "./connection.js";
 import { ASK_USER_QUESTION_TOOL_NAME, NativeAskUserQuestionInputSchema, detectImageMediaType, normalizeImageMediaType, parseImageDataUrl } from "@zcode/contracts";
 import { NativeCodexAccountController, nativeSubscriptionArguments, nativeSubscriptionEnvironment, readNativeSubscriptionCatalog, type NativeCodexAccountOptions } from "./account.js";
 import { NativeChildTranscriptReader } from "./child-transcript.js";
 import { generateNativeCodexTitle } from "./title.js";
+import { acquireNativeProcessLock, type NativeProcessLock } from "./process-lock.js";
+import type { NativeCodexResourceSnapshot } from "./contract.js";
+import { configureNativeCodexResources, prepareNativeCodexResources, type PreparedNativeCodexResources } from "./resources.js";
+export type { NativeCodexResourcePreferences, NativeCodexResourceSnapshot } from "./contract.js";
 export { NativeCodexAccountController } from "./account.js";
 export type { NativeCodexAccountOptions } from "./account.js";
 
@@ -23,6 +27,7 @@ export interface NativeCodexOptions {
   model?: string;
   resolveModel?: NativeCodexModelResolver;
   resolveAutoSubagents?: () => Promise<boolean>;
+  resolveResources?: (canonicalInput: string) => Promise<NativeCodexResourceSnapshot>;
   provider?: string;
   baseUrl?: string;
   skillRoots?: string[];
@@ -194,9 +199,11 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
     input.signal.throwIfAborted();
     const userInput = nativeUserInput(input);
     const autoSubagents = (await this.options.resolveAutoSubagents?.()) === true;
+    const resourceSnapshot = await this.options.resolveResources?.(input.canonicalInput ?? input.text);
+    const resources = await prepareNativeCodexResources(resourceSnapshot, this.options);
     input.signal.throwIfAborted();
     input = { ...input, permission: { ...input.permission } };
-    const configOverrides = validateMcpOverrides(this.options.configOverrides ?? []);
+    const configOverrides = resources.mcpServers ? [] : validateMcpOverrides(this.options.configOverrides ?? []);
     const modelConfig = input.modelSelection
       ? await this.options.resolveModel?.(input.modelSelection)
       : undefined;
@@ -216,19 +223,12 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
     }
     const directory = join(canonicalState, hash(pathKey(workspace)), hash(input.sessionId));
     await mkdir(directory, { recursive: true, mode: 0o700 });
-    const lock = join(directory, "active.lock");
-    try { await mkdir(lock); }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-        throw new Error("This native session is already active or has an unreconciled process lock. Inspect its Codex thread before clearing the lock.");
-      }
-      throw error;
-    }
-    try { return await this.run(input, workspace, directory, configOverrides, resolvedModel, userInput, autoSubagents); }
-    finally { await rm(lock, { recursive: true, force: true }); }
+    const lock = await acquireNativeProcessLock(directory);
+    try { return await this.run(input, workspace, directory, configOverrides, resolvedModel, userInput, autoSubagents, resources, lock); }
+    finally { await lock.release(); }
   }
 
-  private async run(input: ExecuteInput, workspace: string, directory: string, configOverrides: string[], resolvedModel: NativeCodexModelConfig | undefined, userInput: Array<Record<string, unknown>>, autoSubagents: boolean): ReturnType<NativeTurnExecutor["execute"]> {
+  private async run(input: ExecuteInput, workspace: string, directory: string, configOverrides: string[], resolvedModel: NativeCodexModelConfig | undefined, userInput: Array<Record<string, unknown>>, autoSubagents: boolean, resources: PreparedNativeCodexResources, lock: NativeProcessLock): ReturnType<NativeTurnExecutor["execute"]> {
     let connection: CodexConnection | undefined;
     const permission = nativePermission(input.permission);
     let threadId = "";
@@ -240,7 +240,8 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
     let parentCompleted = false;
     let starting = false;
     let sequence = Promise.resolve();
-    const buffered: RpcMessage[] = [];
+    const buffered: PendingNativeNotification[] = [];
+    const notificationBudget = new NativeNotificationBudget();
     const messages = new Map<string, string>();
     const completedMessages = new Set<string>();
     const startedTools = new Map<string, string>();
@@ -463,9 +464,15 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
         } else throw error;
       }
     };
-    const enqueue = (message: RpcMessage) => {
-      sequence = sequence.then(() => handle(message));
+    const enqueue = (entry: PendingNativeNotification) => {
+      sequence = sequence.then(() => handle(entry.message)).finally(() => notificationBudget.release(entry));
       void sequence.catch(error => fail(error instanceof Error ? error : new Error("Native event delivery failed.")));
+    };
+    const admitNotification = (message: RpcMessage) => {
+      if (finished) return;
+      const entry = notificationBudget.reserve(message, fail);
+      if (!entry) return;
+      if (starting) buffered.push(entry); else enqueue(entry);
     };
     const onAbort = () => {
       questionController.abort(abortError());
@@ -493,6 +500,7 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       }
       const providerAliases = apiModel ? [...new Set(["zcode_api", "zcode_selected", provider])] : [provider];
       const connect = async (activeProvider: string) => {
+      await lock.beforeSpawn();
       connection = new CodexConnection({
         binaryPath: this.options.binaryPath,
         // Codex 默认模式会在进程内拒绝 request_user_input；桥接实现后须显式开放该能力。
@@ -507,19 +515,18 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
           "-c", `sandbox_mode=${JSON.stringify(permission.sandbox)}`, "-c", `approval_policy=${JSON.stringify(permission.approvalPolicy)}`, ...configOverrides],
         cwd: workspace, env: subscription ? nativeSubscriptionEnvironment(this.options.env ?? process.env, this.options.codexHome) : { ...(this.options.env ?? process.env), CODEX_HOME: this.options.codexHome, ...(apiModel ? { CODEX_ZCODE_API_KEY: apiModel.apiKey } : {}) },
         onFailure: fail,
-        onMessage: message => { if (starting) buffered.push(message); else enqueue(message); },
+        onMessage: admitNotification,
       });
+      await lock.spawned(connection.processId);
       await connection.request("initialize", {
         clientInfo: { name: "zcode_native_codex", title: "ZCode Native Codex", version: "1.0.0" },
         capabilities: { experimentalApi: true },
       });
       connection.send({ method: "initialized", params: {} });
-      if (this.options.skillRoots?.length) {
-        await connection.request("skills/extraRoots/set", { extraRoots: this.options.skillRoots });
-      }
       return connection;
       };
       connection = await connect(provider);
+      let resourceConfig = await configureNativeCodexResources(connection, resources, workspace);
       if (subscription) {
         const authRequired = () => Object.assign(new Error("Sign in to ChatGPT subscription in Manage Models before sending a Codex task."), { code: "NATIVE_CODEX_SUBSCRIPTION_AUTH_REQUIRED" });
         const unavailable = () => Object.assign(new Error("This model or reasoning level is unavailable for the current ChatGPT subscription. Refresh models and select an available model."), { code: "NATIVE_CODEX_SUBSCRIPTION_MODEL_UNAVAILABLE" });
@@ -538,9 +545,10 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
         ? "Proactively delegate useful independent work to subagents when it improves the task. Keep simple work in the main agent. Delegation does not broaden permissions or override explicit user/project constraints."
         : "Do not spawn subagents unless the user or applicable AGENTS.md/skill instructions explicitly request subagents, delegation, or parallel agent work. Handle other work in the main agent.";
       // 0.166.0 恢复线程时不会更新模型已见的开发指令；按轮应用上下文才能让旧会话立即读取新偏好。
-      const additionalContext = { "zcode-codex-subagents": { kind: "application", value: `<zcode_subagent_policy>\n${delegationPolicy}\n</zcode_subagent_policy>` } };
+      const additionalContext: Record<string, { kind: "application"; value: string }> = { "zcode-codex-subagents": { kind: "application", value: `<zcode_subagent_policy>\n${delegationPolicy}\n</zcode_subagent_policy>` } };
+      if (resources.pluginReferenceWarning !== undefined) additionalContext["zcode-plugin-mcp-availability"] = { kind: "application", value: resources.pluginReferenceWarning || "No package MCP warnings for this turn; only currently exposed tools establish availability." };
       const settings = { cwd: workspace, model, modelProvider: provider, sandbox: permission.sandbox, approvalPolicy: permission.approvalPolicy,
-        ...(resolvedModel ? { config: { model_reasoning_effort: effort ?? null } } : {}) };
+        ...(resolvedModel || Object.keys(resourceConfig).length ? { config: { ...resourceConfig, ...(resolvedModel ? { model_reasoning_effort: effort ?? null } : {}) } } : {}) };
 
       const mapPath = join(directory, "thread.json");
       let saved: Record<string, unknown> | undefined;
@@ -561,6 +569,8 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
           connection.close();
           input.signal.throwIfAborted();
           connection = await connect(thread.modelProvider);
+          resourceConfig = await configureNativeCodexResources(connection, resources, workspace);
+          if (settings.config) Object.assign(settings.config, resourceConfig);
         }
         const resumed = record(await connection.request("thread/resume", { ...settings, modelProvider: thread.modelProvider, threadId, excludeTurns: true }));
         if (record(resumed.thread).id !== threadId) throw new Error("Codex resumed a different thread.");
@@ -605,6 +615,7 @@ export class NativeCodexExecutor implements NativeTurnExecutor {
       return { text, threadId, turnId, toolCallCount };
     } finally {
       finished = true;
+      buffered.length = 0;
       clearInterval(observationTimer);
       questionController.abort(new Error("Native turn ended"));
       // 连接可能在 broker 等待期间退出；先让 Core 发布 resolved，再终结整轮和工具。
@@ -703,6 +714,7 @@ export interface NativeCodexProjectOptions {
   binaryPath?: string;
   codexHome?: string;
   resolveAutoSubagents?: () => Promise<boolean>;
+  resolveResources?: (canonicalInput: string) => Promise<NativeCodexResourceSnapshot>;
   resolveModel?: NativeCodexModelResolver;
 }
 
@@ -746,6 +758,7 @@ export async function createNativeCodexExecutor(options: NativeCodexProjectOptio
     codexHome: canonicalHome,
     ...(options.resolveModel ? { resolveModel: options.resolveModel } : {}),
     ...(options.resolveAutoSubagents ? { resolveAutoSubagents: options.resolveAutoSubagents } : {}),
+    ...(options.resolveResources ? { resolveResources: options.resolveResources } : {}),
     ...nativeCodexEnvironmentOptions(env),
     env: { ...env },
   });

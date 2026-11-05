@@ -362,6 +362,13 @@ export interface AppSettings {
   memoryEnabled?: boolean;
   /** Codex 可按需主动派生子 Agent；默认关闭，下一轮执行读取。 */
   codexAutoSubagentsEnabled?: boolean;
+  /** 内置 Codex 的资源来源；空路径保留原生发现，独立于用户单装的 Codex。 */
+  codexMcpConfigPath?: string;
+  codexSkillRoots?: string[];
+  codexSyncMcp?: boolean;
+  codexMcpDisabledServers?: string[];
+  codexSyncSkills?: boolean;
+  codexSkillDisabledPaths?: string[];
   onboardingOccupation?:
     | "office"
     | "developer"

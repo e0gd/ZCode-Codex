@@ -1,6 +1,9 @@
 import { createWorkspaceMcpTrust } from "../workspace-mcp-trust/index.js";
 import {
   zcodeWorkspaceMcpTrustParamsSchema,
+  getCodexMcpCompatibility,
+  codexMcpServerNameSchema,
+  type CodexMcpSyncCandidate,
   type ZCodeWorkspaceMcpTrustResult,
 } from "@zcode/shared";
 import { createConfig, resolvePath } from "@zcode/adapters/config";
@@ -120,6 +123,31 @@ export async function listMcpServers(
     }
     return statuses;
   };
+  const resultWithCandidates = async (statuses: Record<string, McpServerStatus>) => {
+    const reviewed = await withReviews(statuses);
+    const codexSyncCandidates: CodexMcpSyncCandidate[] = await Promise.all(
+      Object.entries(configuredMcpServers)
+        .filter(([name]) => codexMcpServerNameSchema.safeParse(name).success)
+        .map(async ([name, config]) => {
+          const compatibility = getCodexMcpCompatibility(config, name);
+          const enabled = config.enabled !== false && (await authority.allows(name, config));
+          return {
+            name,
+            ...compatibility,
+            enabled,
+            ...(!compatibility.compatible
+              ? {}
+              : config.enabled === false
+                ? { reason: "disabled" as const }
+                : !enabled
+                  ? { reason: "untrusted" as const }
+                  : {}),
+          };
+        }),
+    );
+    // 目录只返回兼容性元数据，不返回 URL、命令、认证或环境变量；status 路径不建立连接。
+    return zcodeMcpListResultSchema.parse({ statuses: reviewed, codexSyncCandidates });
+  };
   if (params.mode === "status") {
     // 只读轮询曾接管共享 lease，取消其他工作区的 OAuth；仅显式连接允许切换 owner。
     const cached = context.deps.mcpPort && settingsPorts.get(context.deps.mcpPort);
@@ -138,7 +166,7 @@ export async function listMcpServers(
         untrustedProjectMcpServers,
       );
     }
-    return zcodeMcpListResultSchema.parse({ statuses: await withReviews(statuses) });
+    return resultWithCandidates(statuses);
   }
 
   const mcpPort = context.deps.mcpPort
@@ -175,9 +203,7 @@ export async function listMcpServers(
           workspacePath: params.workspace.workspacePath,
         });
       });
-      return zcodeMcpListResultSchema.parse({
-        statuses: await withReviews(pendingAuthorizationSnapshot.statuses),
-      });
+      return resultWithCandidates(pendingAuthorizationSnapshot.statuses);
     }
 
     await connectPromise;
@@ -187,7 +213,7 @@ export async function listMcpServers(
     configuredMcpServers,
     untrustedProjectMcpServers,
   );
-  return zcodeMcpListResultSchema.parse({ statuses: await withReviews(statuses) });
+  return resultWithCandidates(statuses);
 }
 
 async function waitForOAuthAuthorizationSnapshot(

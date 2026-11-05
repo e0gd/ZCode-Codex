@@ -137,6 +137,79 @@ describe("mcp protocol contracts", () => {
 // Bugfix 回归：设置页刷新的 mcp/list 必须带 revalidate，否则进程级 `protocol-settings` lease
 // 会命中连接池里的旧 entry 并回放陈旧快照（见 adapters/src/mcp/pool.ts revalidateEntry）。
 describe("mcp/list connection revalidation", () => {
+  it("lists safe Codex compatibility metadata without connecting or interrupting MCP servers", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zcode-mcp-catalog-"));
+    const connectConfiguredServers = vi.fn();
+    const disconnectServer = vi.fn();
+    const context = {
+      deps: {
+        env: { ...process.env, ZCODE_STORAGE_DIR: join(root, "cli") },
+        mcpPort: { connectConfiguredServers, disconnectServer, status: vi.fn(async () => ({})) },
+      },
+    } as unknown as ZCodeProtocolAgentServerContext;
+    try {
+      const result = await listMcpServers(context, {
+        mode: "status",
+        workspace: { workspaceKey: root, workspacePath: root },
+        mcpServers: [
+          {
+            name: "local",
+            scope: "user",
+            command: "node",
+            args: ["secret-script.mjs"],
+            env: [{ name: "TOKEN", value: "secret-env" }],
+          },
+          {
+            name: "remote",
+            scope: "user",
+            type: "http",
+            url: "https://secret.example.test/mcp",
+            headers: [{ name: "Authorization", value: "secret-header" }],
+          },
+          {
+            name: "legacy",
+            scope: "user",
+            type: "sse",
+            url: "https://secret.example.test/sse",
+            headers: [],
+          },
+          {
+            name: "oauth",
+            scope: "user",
+            type: "http",
+            url: "https://secret.example.test/mcp",
+            headers: [],
+            oauth: { type: "client_credentials", clientId: "client", clientSecret: "secret-oauth" },
+          },
+          {
+            name: "pinned",
+            scope: "user",
+            command: "node",
+            args: [],
+            env: [],
+            protocolVersion: "2026-07-28",
+          },
+          { name: "project", scope: "workspace", command: "node", args: [], env: [] },
+        ],
+      });
+      expect(result.codexSyncCandidates).toEqual(
+        expect.arrayContaining([
+          { name: "local", compatible: true, enabled: true },
+          { name: "remote", compatible: true, enabled: true },
+          { name: "legacy", compatible: false, enabled: true, reason: "sse" },
+          { name: "oauth", compatible: false, enabled: true, reason: "oauth" },
+          { name: "pinned", compatible: false, enabled: true, reason: "fixed_protocol" },
+          { name: "project", compatible: true, enabled: false, reason: "untrusted" },
+        ]),
+      );
+      expect(JSON.stringify(result.codexSyncCandidates)).not.toContain("secret");
+      expect(connectConfiguredServers).not.toHaveBeenCalled();
+      expect(disconnectServer).not.toHaveBeenCalled();
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
   it("asks the pool to revalidate on the default connect mode and skips it for status mode", async () => {
     const root = await mkdtemp(join(tmpdir(), "zcode-mcp-list-revalidate-"));
     const previousStorageDir = process.env.ZCODE_STORAGE_DIR;

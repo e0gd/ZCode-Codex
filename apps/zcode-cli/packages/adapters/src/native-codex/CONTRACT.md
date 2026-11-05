@@ -1,5 +1,39 @@
 # Native Codex adapter
 
+The trusted resource resolver receives canonical turn input and may return a bounded
+`pluginReferenceWarning` derived from that turn's selected resources and valid package
+references. It is model-only per-turn application context, never a tool declaration,
+permission grant or message rewrite. An empty string explicitly clears previous package
+warnings; unavailable MCP dependencies do not block the turn or usable package skills.
+Core supplies canonicalInput separately from expanded model text and clears it for
+model-only continuations; direct callers may omit it to use their input text.
+
+MCP synchronization admits only shared-classifier-compatible enabled definitions
+not in the Host's `codexMcpDisabledServers` opt-out list. Incompatible definitions
+remain visible in the settings catalog with static reasons but do not prevent
+the turn or other MCP servers from starting. This check also covers direct calls.
+
+MCP synchronization failures identify a bounded, escaped server name and a static
+field-specific reason; configuration values and credentials are never formatted
+into diagnostics. Host preflight follows the same error-display contract.
+
+Native notification admission shares a 1024-pending / 32 MiB UTF-8 JSON budget
+across startup buffering, serial live delivery, continuation and provider-alias
+reconnection. The active handler counts until settled. Overflow reports
+`NATIVE_CODEX_EVENT_BACKLOG_LIMIT`, closes the native process connection and keeps
+dispatch receipts; no input is replayed and no queued fact is silently discarded.
+
+`resolveResources` returns one turn's Host-owned resource preferences and trusted
+effective ZCode MCP/skill snapshot. The adapter reads only an explicitly selected
+Codex TOML file's MCP table, expands explicit skill directories to concrete skill
+roots, and applies invocation-local overrides. Sync suppresses native-only MCPs
+and non-system skills before admitting a thread/turn, while preserving ZCode's
+enabled/trust decisions. MCP credentials travel over local stdio JSON config,
+never new command-line arguments. No configuration, credential or skill source is
+rewritten or copied. Relative/unreadable paths fail before input dispatch;
+incompatible ZCode definitions are excluded by the shared classifier. Blank independent settings preserve native discovery and
+legacy deployment injection. See `docs/specs/codex-resources.md`.
+
 The public index provides binary discovery, independent ZCode home resolution, the
 official-turn executor and a lazy managed ChatGPT account controller. Core owns turn
 admission, input identity, permissions and projections. The account controller alone
@@ -34,6 +68,9 @@ thread, turn, input receipt, user message or tool execution. Empty or attempted-
 samples return null. Source mismatch, unsupported sampling, authentication failure,
 timeout and cancellation reject safely without provider fallback or input replay.
 The sampling connection holds the same session `active.lock` as foreground execution.
+New locks record owner/child PIDs and an uncertain-spawn marker. Recovery requires
+all recorded processes to be proven absent; old empty/corrupt locks, live children
+and uncertain spawns remain blocked for inspection. Recovery never replays input.
 A new foreground execute on this executor cancels its pending title and awaits
 connection/lock cleanup first; external active locks cause title sampling to skip.
 Only one title operation can exist per executor, with a 60-second maximum lifetime.

@@ -139,6 +139,10 @@ export interface ZCodeAppOptions {
   executionEngine?: "zcode" | "codex";
   /** Host 每轮读取；仅作用于原生 Codex，不改变普通子智能体定义。 */
   resolveCodexAutoSubagents?: () => Promise<boolean>;
+  /** 每轮从执行 Host 读取，包含原始 MCP 来源与禁用状态；装配层继续做信任过滤。 */
+  resolveCodexResourcePreferences?: () => Promise<
+    import("@zcode/adapters/native-codex").NativeCodexResourceSnapshot
+  >;
   /** 独立 CLI 的配置菜单编辑输入默认值；其他装配保留显式 Session 配置语义。 */
   modelSelectionMode?: "cli-default";
   /** Host 在运行实例创建时传入，运行中不刷新。 */
@@ -434,6 +438,10 @@ export interface ZCodeApp {
    * `plugins/referenceCatalog` 带 sessionId 时以此为 session authority。
    */
   getPluginReferenceCatalog(): PluginReferenceCatalog;
+  /** Current Codex next-turn resource selection; read-only, without starting MCP or inference. */
+  getNativeCodexResourceSnapshot?(): Promise<
+    import("@zcode/adapters/native-codex").NativeCodexResourceSnapshot
+  >;
   /** 当前 Session 的 AgentRuntime Skill 发现快照；冷恢复重建 runtime 后重新发现。 */
   getSkillCatalog(): Promise<SkillLoadOutcome>;
   listMcpServers(): Promise<Record<string, McpServerStatus>>;

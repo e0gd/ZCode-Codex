@@ -5172,6 +5172,74 @@ const enUS: Record<string, string> = {
   "settings.codex.autoSubagentsScope":
     "Global default on this computer, for Codex only. Applies from the next turn, including Web/mobile sessions connected to this computer.",
   "settings.codex.saveFailed": "Could not save. Please try again.",
+  "settings.codex.resources.title": "Codex integration",
+  "settings.codex.resources.description":
+    "Choose the MCP and skill sources for Codex. Each can follow ZCode or use Codex configuration independently.",
+  "settings.codex.resources.mcpSync": "Sync MCP with ZCode",
+  "settings.codex.resources.mcpSyncDescription":
+    "Choose external MCP servers for Codex. Compatible enabled servers start on; incompatible servers stay off. Codex-only MCP settings are ignored while syncing.",
+  "settings.codex.resources.mcpList": "MCP servers to sync",
+  "settings.codex.resources.mcpListDescription":
+    "Compatibility checks configuration, not connection success. These choices affect only Codex and do not change which ZCode MCP servers are enabled.",
+  "settings.codex.resources.mcpRefresh": "Refresh list",
+  "settings.codex.resources.mcpLoading": "Reading MCP servers from the executing computer…",
+  "settings.codex.resources.mcpUnavailable":
+    "Select a connected workspace to view its MCP servers.",
+  "settings.codex.resources.mcpLoadFailed":
+    "Could not read MCP servers. Check the workspace connection and retry. Saved choices are unchanged.",
+  "settings.codex.resources.mcpRetry": "Retry",
+  "settings.codex.resources.mcpEmpty": "No MCP servers to display for this workspace.",
+  "settings.codex.resources.mcpSelect": "Sync {name} to Codex",
+  "settings.codex.resources.mcpReason.compatible": "Configuration compatible; available to sync",
+  "settings.codex.resources.mcpReason.sse":
+    "Incompatible: Codex does not support SSE. Use Streamable HTTP or stdio.",
+  "settings.codex.resources.mcpReason.managed_auth":
+    "Incompatible: ZCode-managed authentication cannot be transferred to Codex yet.",
+  "settings.codex.resources.mcpReason.oauth":
+    "Incompatible: this OAuth configuration cannot be transferred to Codex yet.",
+  "settings.codex.resources.mcpReason.fixed_protocol":
+    "Incompatible: fixed protocol version. Use automatic negotiation.",
+  "settings.codex.resources.mcpReason.unsupported_transport":
+    "Incompatible: unsupported connection type.",
+  "settings.codex.resources.mcpReason.invalid_config":
+    "Incompatible: incomplete or invalid connection configuration.",
+  "settings.codex.resources.mcpReason.internal_tool": "Excluded: internal ZCode host tool.",
+  "settings.codex.resources.mcpReason.disabled": "Disabled in ZCode; excluded from sync.",
+  "settings.codex.resources.mcpReason.untrusted":
+    "Not trusted by this workspace; excluded from sync.",
+  "settings.codex.resources.mcpPath": "Codex MCP configuration file",
+  "settings.codex.resources.mcpPathDescription":
+    "Enter an absolute file path on the executing computer. Only the TOML mcp_servers configuration is read. Leave blank to use config.toml in the embedded Codex isolated home.",
+  "settings.codex.resources.defaultPath": "Leave blank for the embedded Codex default",
+  "settings.codex.resources.skillsSync": "Sync skills with ZCode",
+  "settings.codex.resources.skillList": "Skills to sync",
+  "settings.codex.resources.skillListDescription":
+    "Choose skills for Codex without changing which ZCode skills are enabled. Synchronization does not guarantee that a skill's required tools are available. Codex manages its own system skills.",
+  "settings.codex.resources.skillRefresh": "Refresh list",
+  "settings.codex.resources.skillLoading": "Reading skills from the executing computer…",
+  "settings.codex.resources.skillUnavailable": "Select a connected workspace to view its skills.",
+  "settings.codex.resources.skillLoadFailed":
+    "Could not read skills. Check the workspace connection and retry. Saved choices are unchanged.",
+  "settings.codex.resources.skillRetry": "Retry",
+  "settings.codex.resources.skillEmpty": "No skills to display for this workspace.",
+  "settings.codex.resources.skillSelect": "Sync {name} ({path}) to Codex",
+  "settings.codex.resources.skillScope.workspace": "Workspace skill",
+  "settings.codex.resources.skillScope.user": "User skill",
+  "settings.codex.resources.skillScope.plugin": "Plugin skill",
+  "settings.codex.resources.skillDisabled": "Disabled in ZCode; excluded from synchronization.",
+  "settings.codex.resources.skillsSyncDescription":
+    "Use enabled ZCode skills and preserve disabled skills. Custom directories below are ignored while syncing.",
+  "settings.codex.resources.skillRoots": "Additional Codex skill directories",
+  "settings.codex.resources.skillRootsDescription":
+    "One absolute directory on the executing computer per line, up to 32 entries of 4096 characters each. Leave blank for native skill discovery; custom directories extend it.",
+  "settings.codex.resources.defaultSkills": "Leave blank for Codex default skill discovery",
+  "settings.codex.resources.scope":
+    "Saved changes apply on the next turn, including connected Web/mobile sessions. Sync does not copy or overwrite configuration or skill files. Turning sync off restores the saved paths.",
+  "settings.codex.resources.invalidSkills":
+    "Enter up to 32 skill directories, each no longer than 4096 characters.",
+  "settings.codex.resources.saveFailed":
+    "Could not save. Check that paths are absolute and try again. Your input has been retained.",
+  "settings.codex.resources.saved": "Saved. Changes apply on the next turn.",
   "settings.subagents.filter.enabled": "Enabled",
   "settings.subagents.filter.disabled": "Disabled",
   "settings.subagents.table.name": "Name",

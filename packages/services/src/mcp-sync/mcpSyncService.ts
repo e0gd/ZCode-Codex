@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, posix, win32 } from "node:path";
 import type {
+  CodexMcpSyncCandidate,
   LoadCliMcpFromUserDirectoryRequest,
   LoadCliMcpFromUserDirectoryResult,
   McpScope,
@@ -11,7 +12,9 @@ import type {
   SaveCliMcpToUserDirectoryRequest,
   SettingsDirectoryLocation,
   SettingsDirectorySource,
+  ZCodeAgentMcpServer,
 } from "@zcode/shared";
+import { convertToZCodeAgentMcpServer, getCodexMcpCompatibility } from "@zcode/shared";
 import type { IMcpSyncService } from "./mcpSync.js";
 import { createMcpDataSyncMethods } from "../data-sync/node.js";
 import { createServiceLogger } from "../logger/serviceLogger.js";
@@ -81,6 +84,32 @@ export function createMcpSyncService(
 ): IMcpSyncService {
   return {
     ...createMcpDataSyncMethods(),
+    async listCodexMcpSyncCandidates(params) {
+      if (!dependencies.listMcpServerStatuses) {
+        throw new Error("Codex MCP compatibility listing is unavailable in this runtime");
+      }
+      const directory = await loadMcpFromUserDirectory({ workspacePath: params.workspacePath });
+      const snapshot = createCodexMcpDirectorySnapshot(directory.servers);
+      const result = await dependencies.listMcpServerStatuses({
+        ...params,
+        mode: "status",
+        mcpServers: snapshot.mcpServers.map(({ server }) => server),
+      });
+      if (!result.codexSyncCandidates) {
+        throw new Error("Update the executing Host to list Codex MCP compatibility");
+      }
+      const candidates = new Map(result.codexSyncCandidates.map((entry) => [entry.name, entry]));
+      for (const entry of snapshot.candidates) {
+        const runtime = candidates.get(entry.name);
+        // 原始认证配置在严格 DTO 中以停用墓碑占位；列表必须恢复其真实不兼容原因。
+        // 兼容配置的项目信任状态仍以 CLI 的同一执行 Host 为准。
+        candidates.set(entry.name,
+          !entry.compatible || !entry.enabled ? entry
+            : runtime?.reason === "untrusted" ? { ...entry, enabled: false, reason: "untrusted" }
+              : runtime ?? { ...entry, enabled: false, reason: "invalid_config" });
+      }
+      return [...candidates.values()].sort((left, right) => left.name.localeCompare(right.name));
+    },
     async loadMcpFromUserDirectory(request) {
       return loadMcpFromUserDirectory(request);
     },
@@ -98,6 +127,43 @@ export function createMcpSyncService(
       await saveMcpToUserDirectory(payload);
     },
   };
+}
+
+/** Project only compatible selected definitions; tombstones preserve existing override precedence. */
+export function createCodexMcpDirectorySnapshot(
+  servers: NativeMcpServerRecord[],
+  excludedNames: readonly string[] = [],
+): {
+  mcpServers: Array<{ server: ZCodeAgentMcpServer; enabled: boolean }>;
+  candidates: CodexMcpSyncCandidate[];
+} {
+  const excluded = new Set(excludedNames);
+  const candidates = new Map<string, CodexMcpSyncCandidate>();
+  const mcpServers = [...servers]
+    .sort((left, right) => Number(left.scope === "user") - Number(right.scope === "user"))
+    .map((entry) => {
+      const config = entry.config ?? {};
+      const enabled = entry.enabled !== false && config.enabled !== false;
+      const compatibility = getCodexMcpCompatibility(config, entry.name);
+      const scope = entry.scope === "workspace" ? "workspace" as const : "user" as const;
+      const selected = enabled && compatibility.compatible && !excluded.has(entry.name);
+      const converted = selected ? convertToZCodeAgentMcpServer(entry.name, config, scope) : undefined;
+      const effectiveCompatibility = selected && !converted
+        ? { compatible: false, reason: "invalid_config" as const } : compatibility;
+      candidates.set(entry.name, {
+        name: entry.name,
+        ...effectiveCompatibility,
+        enabled,
+        ...(!enabled ? { reason: "disabled" as const } : {}),
+      });
+      if (converted) return { server: converted, enabled: true };
+      // 不兼容、手动排除和停用都不能直接丢弃，否则同名插件会在 CLI 合并时重新启用。
+      return {
+        server: { name: entry.name, scope, command: "zcode-disabled-mcp", args: [], env: [] },
+        enabled: false,
+      };
+    });
+  return { mcpServers, candidates: [...candidates.values()] };
 }
 
 export function resolveUserHomeDir(): string {

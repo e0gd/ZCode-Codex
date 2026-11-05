@@ -21,6 +21,32 @@ export const identifier = (value: unknown): string => {
 };
 export type RpcMessage = { method: string; params: RecordValue; id?: string | number };
 
+export interface PendingNativeNotification { message: RpcMessage; bytes: number }
+const nativeNotificationMaxPending = 1024;
+const nativeNotificationMaxPendingBytes = 32 * 1024 * 1024;
+
+/** 启动缓冲和实时 Promise 链共用预算；单帧上限无法限制慢消费者前的累计驻留。 */
+export class NativeNotificationBudget {
+  private pending = 0;
+  private pendingBytes = 0;
+
+  reserve(message: RpcMessage, onOverflow: (error: Error) => void): PendingNativeNotification | undefined {
+    const bytes = Buffer.byteLength(JSON.stringify(message), "utf8");
+    if (this.pending >= nativeNotificationMaxPending || this.pendingBytes + bytes > nativeNotificationMaxPendingBytes) {
+      onOverflow(Object.assign(new Error("Codex event delivery exceeded its memory budget. Inspect the thread before continuing; the input was not replayed."), { code: "NATIVE_CODEX_EVENT_BACKLOG_LIMIT" }));
+      return;
+    }
+    this.pending++;
+    this.pendingBytes += bytes;
+    return { message, bytes };
+  }
+
+  release(entry: PendingNativeNotification): void {
+    this.pending--;
+    this.pendingBytes -= entry.bytes;
+  }
+}
+
 export interface NativeChildRelation {
   agentId: string;
   parentAgentId?: string;
@@ -226,6 +252,7 @@ export class NativeChildObserver {
 /** One stdio connection; never retries a possibly accepted request. */
 export class CodexConnection {
   private readonly child: ChildProcessWithoutNullStreams;
+  get processId(): number | undefined { return this.child.pid; }
   private nextId = 1;
   private failure?: Error;
   private readonly onFailure: (error: Error) => void;
@@ -279,6 +306,8 @@ export class CodexConnection {
             }
             options.onMessage({ method: message.method, params: record(message.params),
               ...(message.id !== undefined ? { id: message.id as string | number } : {}) });
+            // 消费者可能因队列超限同步关闭连接；同一 stdout chunk 的剩余帧也必须停止解析。
+            if (this.failure) return;
           } else {
             const request = this.pending.get(message.id as number);
             if (!request) continue;

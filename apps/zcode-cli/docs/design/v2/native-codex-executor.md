@@ -1,6 +1,14 @@
 # Native Codex executor
 
+Native notification admission is bounded per executor turn, including notifications buffered before turn/start responds and across provider-alias reconnections. At most 1024 pending notifications and 32 MiB of UTF-8 JSON notification data may await serial delivery; the in-flight handler counts until it settles. Exceeding either bound fails the turn with NATIVE_CODEX_EVENT_BACKLOG_LIMIT, closes the native connection and preserves dispatch receipts. It never silently drops events or replays the input. This protects against a confirmed unbounded notification queue; it does not establish that queue growth caused the reported 2026-11-04 heap crash.
+
 This CLI integration selects the execution engine for each session from its owning project's immutable setting, defaulting to ZCode. The official Codex app-server owns its complete model/tool loop for Codex projects. ZCode retains its existing command admission, foreground cancellation, session persistence and desktop/mobile event projection. See the [project engine specification](../../../../../docs/specs/project-execution-engine.md) and [cross-host execution contract](../../../../../docs/runtime-tools/native-codex-executor.md) for ownership, crash reconciliation and acceptance requirements.
+
+## Native process lock recovery (2026-11-04)
+
+Foreground execution and title sampling share one adapter-owned session lock. New locks record a random ownership token, owner PID, recorded Codex child PIDs and an uncertain-spawn flag before each spawn. A later admission may reclaim a lock only when the record is valid, no spawn is uncertain, and both the owner and every child PID are proven absent. Permission-denied probes and PID reuse fail closed. A recovery election inside the existing lock serializes stale reclamation; release validates the ownership token. Legacy empty/corrupt locks still require manual process/thread inspection and are never cleared by age. No task is replayed, provider changed or thread forked by lock recovery; existing input receipts remain authoritative. Desktop continuous and mobile replayable clients use the same admission path.
+
+Regression covers live owners, dead owners with live children, uncertain/legacy locks, known-dead recovery, exclusive competing recovery and release ownership. A dead parent alone is insufficient because official Codex can survive its CLI.
 
 ## Project engine selection
 
@@ -9,6 +17,12 @@ The existing Host runtime-materialization preferences response carries the engin
 The environment factory below remains a compatibility entry for standalone experiments without a Host-selected engine. It is not the normal project selection path.
 
 ## Configuration and precedence
+
+### MCP and skill sources (2026-11-04)
+
+The Host settings owner supplies optional Codex MCP/skill preferences through the existing session-runtime-preferences request. Bootstrap rereads those preferences for every native turn and resolves only resource categories whose ZCode-sync flag is enabled. The adapter receives one immutable snapshot: preferences, permitted effective MCP definitions, and enabled skill source paths. This snapshot never changes the active turn, writes either source configuration, or creates a second session/runtime for mobile clients. See [Codex resources](../../../../../docs/specs/codex-resources.md).
+
+ZCode synchronization rereads configuration and plugin discovery for the executing workspace. MCP filtering reuses `createWorkspaceMcpTrust.allows`, excludes disabled servers, and uses the same merge/provenance owner as ordinary runtime configuration. The shared compatibility classifier excludes incompatible definitions and the Host-owned `codexMcpDisabledServers` exclusions without changing the original MCP configuration or blocking other servers/the native turn. The status-only `mcp/list` catalog returns metadata-only candidates with compatibility, effective enablement and static reasons, without connecting servers. Compatible enabled/trusted definitions default on; manual exclusions survive compatibility changes. The built-in `node_repl` server is a ZCode-internal broker host with a dedicated protocol/permission boundary, so that exact built-in provenance is excluded from portable MCP synchronization. Other same-name user definitions do not inherit broker credentials or built-in authority. Skill discovery reuses the existing user/project/plugin roots and disabled-path rules; only selected `SKILL.md` paths cross the adapter boundary. Host-created resource snapshots must not be treated as new blanket workspace trust. An unavailable configuration or source mismatch fails visibly; it cannot retain an older turn's projection or fall back to the other source.
 
 ### Managed ChatGPT subscription (2026-11-04)
 

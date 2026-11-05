@@ -35,6 +35,7 @@ export async function executeNativeTurn(
   this: AgentRuntimeInternal,
   input: {
     text: string;
+    canonicalInput?: string;
     attachments?: readonly ModelMessageContentBlock[];
     modelSelection?: ModelSelection;
     inputId: string;
@@ -259,6 +260,7 @@ export async function executeNativeTurn(
       sessionId: this.sessionId,
       inputId: input.inputId,
       text: input.text,
+      canonicalInput: input.canonicalInput,
       ...(input.attachments?.length ? { attachments: input.attachments } : {}),
       signal: input.signal,
       ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),

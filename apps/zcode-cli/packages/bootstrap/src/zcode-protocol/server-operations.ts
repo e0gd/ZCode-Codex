@@ -3505,8 +3505,53 @@ async function createRecord(
     executionEngine: startupPreferences.executionEngine,
     resolveCodexAutoSubagents: async () => {
       // 每轮从执行 Host 读取，桌面与手机共享既有 runtime 时也不会沿用过期的开启状态。
-      const preferences = await requestSessionRuntimePreferences(context, sessionId, "user-execution", undefined, undefined, workspace);
+      const preferences = await requestSessionRuntimePreferences(
+        context,
+        sessionId,
+        "user-execution",
+        undefined,
+        undefined,
+        workspace,
+      );
       return preferences.codexAutoSubagentsEnabled === true;
+    },
+    resolveCodexResourcePreferences: async () => {
+      const current = await requestSessionRuntimePreferences(
+        context,
+        sessionId,
+        "native-codex-resources",
+        undefined,
+        undefined,
+        workspace,
+      );
+      const entries = [...(current.codexMcpServers ?? [])].sort(
+        (left, right) =>
+          Number(left.server.scope === "workspace") - Number(right.server.scope === "workspace"),
+      );
+      return {
+        preferences: {
+          codexMcpConfigPath: current.codexMcpConfigPath,
+          codexSkillRoots: current.codexSkillRoots,
+          codexSyncMcp: current.codexSyncMcp,
+          codexMcpDisabledServers: current.codexMcpDisabledServers,
+          codexSyncSkills: current.codexSyncSkills,
+          codexSkillDisabledPaths: current.codexSkillDisabledPaths,
+        },
+        ...(current.codexMcpServers === undefined
+          ? {}
+          : {
+              mcpServers: Object.fromEntries(
+                entries.map(({ server, enabled }) => [
+                  server.name,
+                  {
+                    ...protocolMcpServersToRuntimeMcpConfig([server])!.servers[server.name]!,
+                    enabled,
+                  },
+                ]),
+              ),
+            }),
+        ...(current.codexSkillPaths === undefined ? {} : { skillPaths: current.codexSkillPaths }),
+      };
     },
     env: context.deps.env,
     eventStore,

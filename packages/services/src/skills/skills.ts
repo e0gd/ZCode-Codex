@@ -1,8 +1,18 @@
-import type { ZCodeProvider, SkillsPromptContext, SkillsListResult } from "@zcode/shared";
+import type {
+  CodexSkillSyncCandidate,
+  ZCodeProvider,
+  SkillsPromptContext,
+  SkillsListResult,
+} from "@zcode/shared";
 import { ServiceChannels } from "@zcode/shared";
 import { createServiceDescriptor } from "../descriptors.js";
 
 export interface ISkillsService {
+  /** Metadata only, from the same discovery owner; never changes ZCode enabled state. */
+  listCodexSyncCandidates(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+  }): Promise<CodexSkillSyncCandidate[]>;
   list(params: {
     workspacePath: string;
     workspaceIdentity?: string;
