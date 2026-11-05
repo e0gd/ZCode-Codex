@@ -55,6 +55,7 @@ import type { TopicFrameReservation } from "./topic-frame-reservation.js";
 interface LogEntry {
   seq: number;
   deltas: ConversationDelta[];
+  encodedBytes: number;
 }
 
 const TERMINAL_PLAN_STATUSES: ReadonlySet<ToolCallRow["status"]> = new Set([
@@ -64,7 +65,7 @@ const TERMINAL_PLAN_STATUSES: ReadonlySet<ToolCallRow["status"]> = new Set([
 ]);
 
 /**
- * cold replay 会高频测量临时 delta；TextEncoder 会为每次测量再分配完整 Uint8Array。
+ * cold replay 和 live 日志会高频测量临时 delta；TextEncoder 每次会再分配完整 Uint8Array。
  * CLI 已固定运行在 Node，这里对同一 JSON 文本直接计算精确 UTF-8 字节数，不做近似估算。
  */
 export function coldHydrationJsonByteLength(value: unknown): number {
@@ -142,6 +143,8 @@ export interface ConversationTopicPublisherOptions {
   now?: () => number;
   /** 事件保留窗（条），默认 PROTOCOL_V4_LIMITS.eventRetentionPerSession。 */
   retention?: number;
+  /** 回放日志的 UTF-8 JSON byte 上限；条数上限不能约束大工具输入的重复 upsert。 */
+  retentionMaxBytes?: number;
   /** 每订阅者 coalesce 后 op 上限；主要用于协议配置与边界测试。 */
   subscriberBufferMaxOps?: number;
   /** 每订阅者 logical deltas payload 的 UTF-8 byte 上限。 */
@@ -252,10 +255,12 @@ export class ConversationTopicPublisher {
   private projection: ProductProjection;
   private readonly now: () => number;
   private readonly retention: number;
+  private readonly retentionMaxBytes: number;
   private readonly subscriberBufferMaxOps: number;
   private readonly subscriberBufferMaxBytes: number;
   /** 有界日志：seq 升序；resume 只在 (floorSeq, currentSeq] 内合法。 */
   private readonly log: LogEntry[] = [];
+  private replayBytes = 0;
   /** 保留窗下界：base.seq < floorSeq 的恢复请求已无法无损续传 → 只能 snapshot。 */
   private floorSeq = 0;
   private readonly subscriptions = new Map<string, Subscription>();
@@ -274,6 +279,11 @@ export class ConversationTopicPublisher {
     this.projection = new ProductProjection(sessionId, logEpoch);
     this.now = options.now ?? Date.now;
     this.retention = options.retention ?? PROTOCOL_V4_LIMITS.eventRetentionPerSession;
+    this.retentionMaxBytes = nonNegativeHardBound(
+      options.retentionMaxBytes,
+      PROTOCOL_V4_LIMITS.eventRetentionMaxBytesPerSession,
+      "retentionMaxBytes",
+    );
     this.subscriberBufferMaxOps = nonNegativeHardBound(
       options.subscriberBufferMaxOps,
       PROTOCOL_V4_LIMITS.subscriberBufferMaxOps,
@@ -289,6 +299,11 @@ export class ConversationTopicPublisher {
 
   getSnapshot(): ConversationSnapshot {
     return this.projection.getSnapshot();
+  }
+
+  /** 只读维护好的账本；低频内存采样不得重新序列化会话正文。 */
+  collectMemoryDiagnostics(): { replayEntries: number; replayBytes: number } {
+    return { replayEntries: this.log.length, replayBytes: this.replayBytes };
   }
 
   /** 初始化只变化几次，沿既有 snapshot 恢复边界发布，不引入第二份事件流。 */
@@ -613,10 +628,17 @@ export class ConversationTopicPublisher {
   }
 
   private appendDeltas(seq: number, deltas: ConversationDelta[]): void {
-    this.log.push({ seq, deltas });
-    while (this.log.length > this.retention) {
+    const encodedBytes = coldHydrationJsonByteLength({ seq, deltas });
+    this.log.push({ seq, deltas, encodedBytes });
+    this.replayBytes += encodedBytes;
+    // 条数有界仍可能留下数 GB 的重复大行；整条淘汰并推进既有恢复水位，
+    // 不裁剪 projection，也不打断已接收 live delta 的桌面/手机订阅。
+    while (this.log.length > this.retention || this.replayBytes > this.retentionMaxBytes) {
       const evicted = this.log.shift();
-      if (evicted) this.floorSeq = evicted.seq;
+      if (evicted) {
+        this.floorSeq = evicted.seq;
+        this.replayBytes -= evicted.encodedBytes;
+      }
     }
     if (deltas.length === 0) return;
     for (const subscription of this.subscriptions.values()) {
@@ -655,6 +677,7 @@ export class ConversationTopicPublisher {
     let candidate = new ConversationTopicPublisher(this.sessionId, this.logEpoch, {
       now: this.now,
       retention: this.retention,
+      retentionMaxBytes: this.retentionMaxBytes,
       subscriberBufferMaxOps: this.subscriberBufferMaxOps,
       subscriberBufferMaxBytes: this.subscriberBufferMaxBytes,
     });
@@ -665,6 +688,7 @@ export class ConversationTopicPublisher {
       candidate = new ConversationTopicPublisher(this.sessionId, this.logEpoch, {
         now: this.now,
         retention: this.retention,
+        retentionMaxBytes: this.retentionMaxBytes,
         subscriberBufferMaxOps: this.subscriberBufferMaxOps,
         subscriberBufferMaxBytes: this.subscriberBufferMaxBytes,
       });
@@ -719,10 +743,12 @@ export class ConversationTopicPublisher {
       // 定点撤销。rehydrate 本来就要求所有现有订阅 resync，因此在当前 seq 建立 snapshot
       // recovery boundary；此后新事件仍从该水位正常 resume，不改变 replayable 恢复语义。
       this.log.splice(0, this.log.length);
+      this.replayBytes = 0;
       this.floorSeq = candidate.currentSeq;
     } else {
       // strict fallback 没有延迟 materialization，完整保留原有 retained-log 恢复语义。
       this.log.splice(0, this.log.length, ...candidate.log);
+      this.replayBytes = candidate.replayBytes;
       this.floorSeq = candidate.floorSeq;
     }
     this.wireSnapshotBytesUpperBound = candidate.wireSnapshotBytesUpperBound;

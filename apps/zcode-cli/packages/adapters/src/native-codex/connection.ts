@@ -91,6 +91,12 @@ export function nativeToolName(item: RecordValue): string {
 }
 
 export function nativeToolInput(item: RecordValue): RecordValue {
+  if (item.type === "commandExecution") {
+    // 官方完成通知携带整份输出；若原样作为 input，父/子工具会重复持久化、
+    // 克隆并投影同一结果。输出只走 nativeToolOutput，输入保留命令与执行元数据。
+    const { aggregatedOutput: _output, ...input } = item;
+    return input;
+  }
   if (nativeToolName(item) !== "Agent") return item;
   const display = childTaskCard(item);
   return { ...display, executionBackend: "codex", description: childTaskDescription(display).slice(0, 160), subagent_type: "Codex", run_in_background: true };

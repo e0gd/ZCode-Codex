@@ -24,6 +24,9 @@
         // v4 权威投影沿用上游存量大文件；队列身份修复不为行数机械拆分投影器。
         "**/apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/product-projection.ts",
         "**/apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/v4-gateway.ts",
+        // publisher 在既有上游基线已超 800 行；本次只增加回放字节记账和淘汰，
+        // 沿用既有完整投递状态机，仅将该存量文件的行数诊断登记为告警。
+        "**/apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/conversation-topic-publisher.ts",
         // 后台 Agent 终态改为 originMeta 结构化下发，只补充透传与冷恢复回读；不为行数机械拆分投影。
         "**/apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/product-projection.ts",
         "**/apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/transcript-hydration.ts",

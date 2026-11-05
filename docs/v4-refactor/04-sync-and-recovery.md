@@ -33,6 +33,28 @@ client                  connection facade               CLI publisher
   或 delivery profile。合法 base 从该订阅者的客户端水位重新裁决，不使用 publisher 的
   `sentSeq` 代替。
 
+回放日志同时受 `eventRetentionPerSession`（2000 条）和
+`eventRetentionMaxBytesPerSession`（16 MiB）约束；字节数按每条 `{seq,deltas}` 的 UTF-8
+JSON 精确记账。条数限制不能约束大工具输入、输出和重复 upsert 的总容量。
+`ConversationTopicPublisher` 是日志、字节账本及 `floorSeq` 的唯一所有者。追加后按 seq
+淘汰最旧整条记录，直到两项均满足；单条超过预算也不能驻留，floor 推进到该条 seq。
+仅缩短可 resume 的窗口，不裁剪权威投影或持久消息。小于 floor 的 subscribe / same-sub
+resync 复用现有 snapshot 路径；等于 floor 可从其后续传。空 delta 仍计条数和元数据字节。
+rehydrate 原子替换日志时同步替换字节账本；失败不得改变原日志、字节数、floor 或 reservation。
+
+```text
+Core event → publisher projection + bounded replay log → existing subscription buffers
+                              │ byte/count eviction
+                              └─ floorSeq advances → stale mobile base → owned snapshot
+desktop continuous ── existing live buffer ─────────────┐
+mobile replayable ─── resume or snapshot + live deltas ─┴─ same authoritative projection
+```
+
+日志淘汰不取消工具/Agent、不清空活跃订阅、不改 owner/lease、profile 或执行幂等边界。
+验收覆盖 UTF-8 与 JSON 转义、字节/条数边界、单条超限、两种 profile 的在线续流和重新连接、
+same-sub resync、rehydrate 成功/失败及只读内存计数器。容量指标复用低频日志，只读追加时
+维护的账本，不重新序列化会话正文；UTF-8 JSON 字节数不等同于 JS 堆大小。
+
 subscribe response 只能携带小 ACK，不能内嵌 logical snapshot，也不能返回 `frames[]`（数组整体仍可能超过 1 MiB）。ACK 写出后，initial snapshot/resume 才以普通 owned-port wire notification 发送；客户端完整 assembly 前保持旧 store 或 loading 状态。
 
 `SubscribeAck.logEpoch` 只证明本次 subscription admission 与服务端裁决，**不会凭空创建 resume

@@ -2933,15 +2933,24 @@ export class ConversationV4Gateway {
   }
 
   /**
-   * 内存诊断计数器。只读 size，不触碰状态。
+   * 内存诊断计数器。只读 size 和容量账本，不触碰状态或序列化正文。
    * detachedLive 用于观察子 session publisher 是否随父 session 释放。
    */
   collectMemoryDiagnostics(): Record<string, number> {
+    let replayEntries = 0;
+    let replayBytes = 0;
+    for (const publisher of this.publishers.values()) {
+      const replay = publisher.collectMemoryDiagnostics();
+      replayEntries += replay.replayEntries;
+      replayBytes += replay.replayBytes;
+    }
     return {
       publishers: this.publishers.size,
       detachedLive: this.detachedLiveSessions.size,
       detachedTerminal: this.detachedTerminalAt.size,
       rawSeqStates: this.rawSequenceStates.size,
+      replayEntries,
+      replayBytes,
     };
   }
 

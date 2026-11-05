@@ -4815,7 +4815,32 @@ describe("ConversationV4Gateway.collectMemoryDiagnostics", () => {
       detachedLive: 0,
       detachedTerminal: 0,
       rawSeqStates: 0,
+      replayEntries: 0,
+      replayBytes: 0,
     });
+  });
+
+  it("aggregates parent and detached replay ledgers and releases their bytes on disposal", () => {
+    const gateway = makeGateway(makeHost());
+    const parent = new EventLog("session-1");
+    const child = new EventLog("child-1");
+    const parentEvent = sessionCreated(parent);
+    const childEvent = sessionCreated(child);
+    const reference = new ConversationTopicPublisher("session-1", "epoch-1");
+    reference.ingest(parentEvent);
+    gateway.ingest("session-1", parentEvent);
+    const parentStats = gateway.collectMemoryDiagnostics();
+    expect(parentStats.replayEntries).toBe(reference.collectMemoryDiagnostics().replayEntries);
+    expect(parentStats.replayBytes).toBe(reference.collectMemoryDiagnostics().replayBytes);
+    expect(parentStats.replayBytes).toBeGreaterThan(0);
+    gateway.ingestDetachedLiveSession("child-1", childEvent, "session-1");
+    expect(gateway.collectMemoryDiagnostics()).toMatchObject({
+      publishers: 2,
+      replayEntries: 2 * parentStats.replayEntries!,
+      replayBytes: 2 * parentStats.replayBytes!,
+    });
+    gateway.disposeSession("session-1");
+    expect(gateway.collectMemoryDiagnostics()).toMatchObject({ publishers: 0, replayEntries: 0, replayBytes: 0 });
   });
 });
 

@@ -1,5 +1,9 @@
 # Native Codex adapter
 
+Native command input projection excludes output-only `aggregatedOutput` for both
+parent and child items. Official item data and complete tool results remain intact;
+Core remains the sole persistence and product-projection owner.
+
 Native question waits are detached from the serialized notification queue. Core
 owns interactions and persisted answers; this adapter owns their native delivery
 tasks until settled. Explicit async answers use turn/steer with expectedTurnId

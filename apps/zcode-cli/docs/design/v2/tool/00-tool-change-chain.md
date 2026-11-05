@@ -1,5 +1,15 @@
 # Tool Change Chain Spec
 
+Native command input projection omits the output-only `aggregatedOutput` field;
+official execution and complete result delivery are unchanged. The shared mapper
+covers parent and child tools, including completed-only observations. V4 publisher
+replay logs now have both entry-count and UTF-8 JSON byte limits. Eviction advances
+the existing recovery floor; stale desktop/mobile bases recover through the same
+owned snapshot path while live subscription buffers continue independently. No
+execution cancellation, original-input replay, persistent transcript pruning or
+owner/profile changes are introduced. Existing low-frequency memory diagnostics
+also report retained replay entries/bytes. See the recovery and native executor specs.
+
 Native Codex question answers use the existing AskUserQuestion UI → V4 resolveInteraction / Host reverse response → Core broker → persisted tool answer path. Waiting for either blocking RPC questions or async agentMessage questions no longer blocks native notification delivery. Explicit async answers steer the active owned turn with expectedTurnId; already completed turns use the same-thread continuation, with no original-input replay. Pending question/delivery tasks prevent early Core completion. Only a structured invalid-request rejection plus observed completion of the exact expected turn permits the race continuation; uncertain failures are never retried. Desktop continuous and mobile replayable share this behavior. See the native executor spec and adapter question regressions.
 
 Native package MCP warnings parse Core's persisted canonicalInput, separately from expanded model text. Model-only continuations pass an empty canonicalInput, so slash-command templates and internal continuations do not acquire user-reference meaning. The optional field is internal to the native execution port; no desktop/Web wire schema changes.

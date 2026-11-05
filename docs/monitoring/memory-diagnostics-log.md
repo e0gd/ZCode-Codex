@@ -76,6 +76,7 @@ CLI 侧写结构化日志：`event=zcode_protocol.process.memory_sample`，`modu
 | agent_node | `eventRows` | 全部 record 的内存 event store 行数之和 |
 | agent_node | `eventEvicted` / `eventTransientRetained` | 按 turn 窗口策略累计淘汰的瞬态事件数 / 当前仍驻留的瞬态事件数（`apps/zcode-cli/docs/design/v2/session-event-store-retention.md`） |
 | agent_node | `v4.publishers` / `v4.detachedLive` / `v4.detachedTerminal` / `v4.rawSeqStates` | V4 gateway 的 publisher、detached 子 session、已终态待释放的 detached 子 session、raw seq 状态表大小 |
+| agent_node | `v4.replayEntries` / `v4.replayBytes` | 全部 conversation publisher 的驻留回放记录数 / UTF-8 JSON 字节数；读取追加时维护的账本，不序列化正文，不等同于 JS 堆大小 |
 | utility_host | `agent.sessionEmitters` / `agent.seqStates` / `agent.pendingPermissions` / `agent.pendingUserInputs` | `zcodeAgentService` 的 per-session 镜像表 |
 | utility_host | `task.runtimeCommands` / `task.toolMemoryTasks` / `task.taskEmitters` / `task.overlays` | `zcodeTaskServiceAdapter` 的 per-task 表 |
 | utility_host | `terminal.open` / `fileWatcher.open` | pty 与 `fs.watch` 实例数 |

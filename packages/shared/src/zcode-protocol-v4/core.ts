@@ -72,6 +72,7 @@ export const PROTOCOL_V4_LIMITS = {
   subscriberBufferMaxOps: 500,
   subscriberBufferMaxBytes: 1024 * 1024,
   eventRetentionPerSession: 2000,
+  eventRetentionMaxBytesPerSession: 16 * 1024 * 1024,
   snapshotTailWindowRows: 60,
   rowsRangeMaxLimit: 200,
   toolOutputFinalHeadBytes: 32 * 1024,

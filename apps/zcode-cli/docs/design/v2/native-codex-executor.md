@@ -233,6 +233,14 @@ Regression evidence includes option and custom-text submission, multiple questio
 
 ### Native child observation
 
+Native command observations keep `aggregatedOutput` only in their output path, never
+in the projected/persisted tool input. Both parent items and child observations use
+the same adapter mapping, including completed-only items. This avoids duplicating
+large command results as input and serializing/cloning that duplicate on subsequent
+child updates. Command identity, command text, cwd, actions and other input metadata
+remain available; the original official item and complete result are unchanged.
+Regression must cover parent fallback, running child updates and terminal results.
+
 Native Codex owns child execution. The adapter translates legacy `collabAgentToolCall` spawn identities and official `subAgentActivity` items with `kind: started`, plus child-thread notifications; Core owns durable `subagent_child` session records, transcript parts and standard SubagentSpawned/Message/Stopped facts. The existing V4 projection, composer robot trigger, background directory and read-only child pane consume these facts. No ZCode model loop or second child executor is created. Native spawn tools use the existing `Agent` presentation and exact parentToolCallId pairing.
 
 Official Codex 0.166 with `gpt-6.1-sol` emits the new activity shape for `collaboration.spawn_agent`. Its `id` is the actual spawn call identity, `agentThreadId` establishes the trusted child relation and `agentPath` supplies a display description when no prompt exists. Both item lifecycle notifications share that identity and must not create two children. The completed spawn item stores the same durable launch ACK as the legacy path. Other activity kinds must not create children or generic phantom tool rows. In particular, `kind: completed` is an activity notice without an outcome and may arrive before the child `turn/completed`; only the child turn's authoritative terminal determines success, failure or cancellation. A duplicate started activity cannot reopen a terminal child. Unknown parent/old-turn activity remains excluded.

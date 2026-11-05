@@ -68,6 +68,32 @@ function input(overrides: Partial<Parameters<NativeCodexExecutor["execute"]>[0]>
 }
 const activeParams = { threadId: "thread-1", turnId: "turn-1" };
 
+describe("native command input memory", () => {
+  it("keeps large command output out of projected input without changing the official item or result", () => {
+    const output = "command output\n".repeat(80_000);
+    const item = { type: "commandExecution", id: "command-1", command: "fixture", cwd: "/project",
+      status: "completed", commandActions: [{ type: "unknown", command: "fixture" }], aggregatedOutput: output };
+    const projected = nativeToolInput(item);
+    expect(projected).not.toHaveProperty("aggregatedOutput");
+    expect(projected).toMatchObject({ command: "fixture", cwd: "/project", commandActions: item.commandActions });
+    expect(item.aggregatedOutput).toBe(output);
+    expect(nativeToolOutput(item, "session-1")).toBe(output);
+  });
+
+  it("omits output from running and completed child inputs and preserves the terminal result", async () => {
+    const events: NativeTurnEvent[] = [];
+    const observer = new NativeChildObserver(async event => { events.push(event); }, "session-1");
+    await observer.collaboration({ type: "subAgentActivity", kind: "started", id: "spawn", agentThreadId: "child-1" });
+    const item = { type: "commandExecution", id: "command-1", command: "fixture", aggregatedOutput: "running output" };
+    await observer.notification({ method: "item/started", params: { threadId: "child-1", turnId: "child-turn", item } });
+    await observer.notification({ method: "item/completed", params: { threadId: "child-1", turnId: "child-turn", item: { ...item, status: "completed", aggregatedOutput: "complete output" } } });
+    const updates = events.filter(event => event.type === "subagentUpdated").flatMap(event => event.items).filter(item => item.type === "tool");
+    expect(updates).toHaveLength(2);
+    for (const item of updates) expect(item.input).not.toHaveProperty("aggregatedOutput");
+    expect(updates.at(-1)).toMatchObject({ output: "complete output", completed: true });
+  });
+});
+
 describe("native notification backlog", () => {
   it("stops parsing the current stdout chunk when the consumer closes the connection", () => {
     const remote = server();
