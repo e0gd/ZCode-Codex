@@ -4827,7 +4827,10 @@ const zhCN: Record<string, string> = {
     "选择 Codex 使用的 MCP 和技能来源。MCP 与技能可分别跟随 ZCode，或使用 Codex 自己的配置。",
   "settings.codex.resources.mcpSync": "MCP 与 ZCode 同步",
   "settings.codex.resources.mcpSyncDescription":
-    "选择交给 Codex 的外部 MCP。兼容且已启用的项目默认开启，不兼容的项目自动关闭；Codex 独立 MCP 暂不使用。",
+    "选择交给 Codex 的外部 MCP。兼容且已启用的项目默认开启，不兼容的项目自动关闭。",
+  "settings.codex.resources.nativeMcp": "保留 Codex 原生 MCP",
+  "settings.codex.resources.nativeMcpDescription":
+    "默认开启，可与同步的 ZCode MCP 同时使用。沿用 Codex 自有配置中的启用与登录状态，下一轮对话生效。",
   "settings.codex.resources.mcpList": "同步的 MCP",
   "settings.codex.resources.mcpListDescription":
     "兼容性只检查配置，不代表已连接成功。这里的选择只影响 Codex，不会更改 ZCode 的 MCP 启用状态。",
@@ -4871,6 +4874,8 @@ const zhCN: Record<string, string> = {
   "settings.codex.resources.skillScope.user": "用户技能",
   "settings.codex.resources.skillScope.plugin": "插件技能",
   "settings.codex.resources.skillDisabled": "ZCode 中已停用，不参与同步。",
+  "settings.codex.resources.skillMcpIncompatible":
+    "配套 MCP 不兼容：{names}。此技能默认不同步，可手动开启；依赖该 MCP 的操作可能无法完成。",
   "settings.codex.resources.skillsSyncDescription":
     "让 Codex 使用 ZCode 已启用的技能，保留技能的停用状态。同步时忽略下方自定义目录。",
   "settings.codex.resources.skillRoots": "Codex 额外技能目录",

@@ -366,9 +366,11 @@ export interface AppSettings {
   codexMcpConfigPath?: string;
   codexSkillRoots?: string[];
   codexSyncMcp?: boolean;
+  codexUseNativeMcp?: boolean;
   codexMcpDisabledServers?: string[];
   codexSyncSkills?: boolean;
   codexSkillDisabledPaths?: string[];
+  codexSkillEnabledPaths?: string[];
   onboardingOccupation?:
     | "office"
     | "developer"

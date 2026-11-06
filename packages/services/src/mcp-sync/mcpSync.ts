@@ -1,5 +1,6 @@
 import type {
   CodexMcpSyncCandidate,
+  CodexPluginMcpDependency,
   LoadCliMcpFromUserDirectoryRequest,
   LoadCliMcpFromUserDirectoryResult,
   McpDataSyncPayload,
@@ -23,6 +24,11 @@ export interface IMcpSyncService extends IDataSyncCategoryService<McpDataSyncPay
     workspacePath: string;
     workspaceIdentity?: string;
   }): Promise<CodexMcpSyncCandidate[]>;
+  /** Plugin identity/dependency metadata from the same configuration-only catalog. */
+  listCodexPluginMcpDependencies(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+  }): Promise<CodexPluginMcpDependency[]>;
   loadMcpFromUserDirectory(
     request?: LoadCliMcpFromUserDirectoryRequest,
   ): Promise<LoadCliMcpFromUserDirectoryResult>;

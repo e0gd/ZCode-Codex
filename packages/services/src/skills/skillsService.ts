@@ -14,8 +14,13 @@ import type {
   SkillsPromptContext,
   SkillsListResult,
   SkillsCapability,
+  CodexPluginMcpDependency,
 } from "@zcode/shared";
-import { DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS, codexSkillSyncCandidateSchema } from "@zcode/shared";
+import {
+  DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS,
+  codexSkillSyncCandidateSchema,
+  getCodexPluginIncompatibleMcpServers,
+} from "@zcode/shared";
 import type { ISkillsService } from "./skills.js";
 import { SKILL_FILE_NAME, walkSkillMarkdownPaths } from "./skillDiscoveryWalk.js";
 import { readInstalledPluginRoots } from "#src/plugins/installedPluginRoots.js";
@@ -58,6 +63,10 @@ function resolveUserHomeDir() {
 
 interface SkillsServiceOptions {
   isDesktopRuntime?: boolean;
+  readCodexPluginMcpDependencies?: (params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+  }) => Promise<CodexPluginMcpDependency[]>;
 }
 
 /** ZCode Agent 工作区级技能目录。 */
@@ -1028,6 +1037,9 @@ export function createSkillsService(options?: SkillsServiceOptions): ISkillsServ
   return {
     async listCodexSyncCandidates(params) {
       const { skills } = await this.list(params);
+      const dependencies = skills.some((skill) => skill.pluginId)
+        ? ((await options?.readCodexPluginMcpDependencies?.(params)) ?? [])
+        : [];
       // 与原技能发现/启停共用唯一 owner，列表只传元数据，不能把技能正文送进设置页。
       return skills.map((skill) =>
         codexSkillSyncCandidateSchema.parse({
@@ -1036,6 +1048,16 @@ export function createSkillsService(options?: SkillsServiceOptions): ISkillsServ
           scope: skill.scope,
           enabled: skill.enabled !== false,
           ...(skill.pluginName ? { pluginName: skill.pluginName } : {}),
+          ...(skill.pluginId
+            ? {
+                pluginId: skill.pluginId,
+                incompatibleMcpServers: getCodexPluginIncompatibleMcpServers(
+                  skill.pluginId,
+                  dependencies,
+                  [],
+                ),
+              }
+            : {}),
         }),
       );
     },

@@ -7,7 +7,11 @@ import type {
   LocalePreference,
   ZCodeInteractionBehavior,
 } from "@zcode/shared";
-import { appToolSearchModeSchema, getCodexSkillPathKey } from "@zcode/shared";
+import {
+  appToolSearchModeSchema,
+  getCodexSkillPathKey,
+  createCodexSkillSelector,
+} from "@zcode/shared";
 import {
   TID_SETTINGS_ASK_USER_QUESTION_AUTO_RESOLUTION_SWITCH,
   TID_SETTINGS_NATIVE_SEARCH_SWITCH,
@@ -129,9 +133,11 @@ type CodexResourcePreferences = Pick<
   | "codexMcpConfigPath"
   | "codexSkillRoots"
   | "codexSyncMcp"
+  | "codexUseNativeMcp"
   | "codexSyncSkills"
   | "codexMcpDisabledServers"
   | "codexSkillDisabledPaths"
+  | "codexSkillEnabledPaths"
 >;
 const CODEX_RESOURCE_PATH_MAX_LENGTH = 4096;
 const CODEX_SKILL_ROOT_MAX_COUNT = 32;
@@ -154,36 +160,47 @@ export function CodexResourcesSettings({
   const [mcpPath, setMcpPath] = useState("");
   const [skillDirectories, setSkillDirectories] = useState("");
   const [syncMcp, setSyncMcp] = useState(false);
+  const [useNativeMcp, setUseNativeMcp] = useState(true);
   const [syncSkills, setSyncSkills] = useState(false);
   const [disabledServers, setDisabledServers] = useState<string[]>([]);
   const [disabledSkillPaths, setDisabledSkillPaths] = useState<string[]>([]);
+  const [enabledSkillPaths, setEnabledSkillPaths] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
   const [saved, setSaved] = useState(false);
   const storedMcpPath = settings?.codexMcpConfigPath ?? "";
   const storedSkillDirectories = (settings?.codexSkillRoots ?? []).join("\n");
   const storedSyncMcp = settings?.codexSyncMcp === true;
+  const storedUseNativeMcp = settings?.codexUseNativeMcp !== false;
   const storedSyncSkills = settings?.codexSyncSkills === true;
   const storedDisabledServers = JSON.stringify(settings?.codexMcpDisabledServers ?? []);
   const storedDisabledSkillPaths = JSON.stringify(settings?.codexSkillDisabledPaths ?? []);
+  const storedEnabledSkillPaths = JSON.stringify(settings?.codexSkillEnabledPaths ?? []);
   const catalog = useCodexMcpSyncCandidates(syncMcp, workspacePath, workspaceIdentity);
   const skillCatalog = useCodexSkillSyncCandidates(syncSkills, workspacePath, workspaceIdentity);
-  const disabledSkillKeys = new Set(disabledSkillPaths.map(getCodexSkillPathKey));
+  const selectSkill = createCodexSkillSelector({
+    codexSkillDisabledPaths: disabledSkillPaths,
+    codexSkillEnabledPaths: enabledSkillPaths,
+  });
   useEffect(() => {
     // 只跟随资源权威字段，避免其他设置广播清掉未提交的路径和 MCP 选择草稿。
     setMcpPath(storedMcpPath);
     setSkillDirectories(storedSkillDirectories);
     setSyncMcp(storedSyncMcp);
+    setUseNativeMcp(storedUseNativeMcp);
     setSyncSkills(storedSyncSkills);
     setDisabledServers(JSON.parse(storedDisabledServers) as string[]);
     setDisabledSkillPaths(JSON.parse(storedDisabledSkillPaths) as string[]);
+    setEnabledSkillPaths(JSON.parse(storedEnabledSkillPaths) as string[]);
   }, [
     storedMcpPath,
     storedSkillDirectories,
     storedSyncMcp,
+    storedUseNativeMcp,
     storedSyncSkills,
     storedDisabledServers,
     storedDisabledSkillPaths,
+    storedEnabledSkillPaths,
   ]);
   const skillRoots = [
     ...new Set(
@@ -210,9 +227,11 @@ export function CodexResourcesSettings({
         codexMcpConfigPath: mcpPath.trim(),
         codexSkillRoots: skillRoots,
         codexSyncMcp: syncMcp,
+        codexUseNativeMcp: useNativeMcp,
         codexSyncSkills: syncSkills,
         codexMcpDisabledServers: disabledServers,
         codexSkillDisabledPaths: disabledSkillPaths,
+        codexSkillEnabledPaths: enabledSkillPaths,
       });
       setSaved(true);
     } catch {
@@ -230,6 +249,24 @@ export function CodexResourcesSettings({
         {intl.formatMessage({ id: "settings.codex.resources.description" })}
       </p>
       <SettingsGroupCard>
+        <SettingsRow
+          controlLayout="wide"
+          label={intl.formatMessage({ id: "settings.codex.resources.nativeMcp" })}
+          description={intl.formatMessage({ id: "settings.codex.resources.nativeMcpDescription" })}
+          control={
+            <Switch
+              data-testid="codex-use-native-mcp"
+              className="data-[state=checked]:bg-primary [&[data-state=checked]_[data-slot=switch-thumb]]:translate-x-[calc(100%-2px)]"
+              aria-label={intl.formatMessage({ id: "settings.codex.resources.nativeMcp" })}
+              checked={useNativeMcp}
+              disabled={unavailable}
+              onCheckedChange={(value) => {
+                edited();
+                setUseNativeMcp(value);
+              }}
+            />
+          }
+        />
         <SettingsRow
           controlLayout="wide"
           label={intl.formatMessage({ id: "settings.codex.resources.mcpSync" })}
@@ -520,7 +557,7 @@ export function CodexResourcesSettings({
                   >
                     {skillCatalog.candidates.map((candidate) => {
                       const candidateKey = getCodexSkillPathKey(candidate.path);
-                      const excluded = disabledSkillKeys.has(candidateKey);
+                      const selected = selectSkill(candidate);
                       return (
                         <div
                           key={candidateKey}
@@ -546,13 +583,24 @@ export function CodexResourcesSettings({
                                 })}
                               </p>
                             ) : null}
+                            {candidate.incompatibleMcpServers?.length ? (
+                              <p
+                                data-testid="codex-skill-mcp-warning"
+                                className="break-all text-ui-sm leading-5 text-warning"
+                              >
+                                {intl.formatMessage(
+                                  { id: "settings.codex.resources.skillMcpIncompatible" },
+                                  { names: candidate.incompatibleMcpServers.join(", ") },
+                                )}
+                              </p>
+                            ) : null}
                           </div>
                           <Switch
                             data-testid="codex-skill-candidate"
                             data-name={candidate.name}
                             data-path={candidate.path}
                             className="mt-0.5 shrink-0 data-[state=checked]:bg-primary [&[data-state=checked]_[data-slot=switch-thumb]]:translate-x-[calc(100%-2px)]"
-                            checked={candidate.enabled && !excluded}
+                            checked={selected}
                             disabled={unavailable || !candidate.enabled}
                             aria-label={intl.formatMessage(
                               { id: "settings.codex.resources.skillSelect" },
@@ -570,6 +618,17 @@ export function CodexResourcesSettings({
                                       )
                                     ? current
                                     : [...current, candidate.path],
+                              );
+                              setEnabledSkillPaths((current) =>
+                                value
+                                  ? current.some(
+                                      (path) => getCodexSkillPathKey(path) === candidateKey,
+                                    )
+                                    ? current
+                                    : [...current, candidate.path]
+                                  : current.filter(
+                                      (path) => getCodexSkillPathKey(path) !== candidateKey,
+                                    ),
                               );
                             }}
                           />

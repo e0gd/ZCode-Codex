@@ -107,6 +107,15 @@ before(async () => {
                             pluginName: "fixture-plugin",
                             enabled: false,
                           },
+                          {
+                            name: "plugin-with-incompatible-mcp",
+                            path: "C:/Fixture/Plugins/image-search/SKILL.md",
+                            scope: "plugin",
+                            pluginName: "image-search",
+                            pluginId: "image-search@fixture",
+                            enabled: true,
+                            incompatibleMcpServers: ["plugin:image-search:image_search"],
+                          },
                         ],
                   ),
                 );
@@ -153,9 +162,11 @@ for (const width of [390, 1200])
           codexMcpConfigPath: "",
           codexSkillRoots: [],
           codexSyncMcp: false,
+          codexUseNativeMcp: true,
           codexSyncSkills: false,
           codexMcpDisabledServers: ["not-currently-listed"],
           codexSkillDisabledPaths: ["C:/Not-currently-listed/SKILL.md"],
+          codexSkillEnabledPaths: ["C:/Not-currently-listed/OptIn/SKILL.md"],
         });
         const page = await browser.newPage({
           viewport: { width, height: 1000 },
@@ -168,6 +179,7 @@ for (const width of [390, 1200])
           const mcp = page.locator('[data-testid="codex-mcp-config-path"]');
           const skills = page.locator('[data-testid="codex-skill-roots"]');
           const mcpSync = page.locator('[data-testid="codex-sync-mcp"]');
+          const nativeMcp = page.getByTestId("codex-use-native-mcp");
           const skillSync = page.locator('[data-testid="codex-sync-skills"]');
           const save = page.locator('[data-testid="codex-resources-save"]');
           await mcp.waitFor();
@@ -178,12 +190,15 @@ for (const width of [390, 1200])
           assert.equal(await mcp.inputValue(), "");
           assert.equal(await skills.inputValue(), "");
           assert.equal(await mcpSync.getAttribute("aria-checked"), "false");
+          assert.equal(await nativeMcp.getAttribute("aria-checked"), "true");
+          await nativeMcp.click();
           assert.equal(await skillSync.getAttribute("aria-checked"), "false");
           await mcp.fill("C:\\Codex Config\\config.toml");
           await skills.fill("C:\\Codex Skills\nC:\\More Skills");
           await save.click();
           await page.getByRole("status").waitFor();
           assert.equal((await settings.get()).codexMcpConfigPath, "C:\\Codex Config\\config.toml");
+          assert.equal((await settings.get()).codexUseNativeMcp, false);
           assert.deepEqual((await settings.get()).codexSkillRoots, [
             "C:\\Codex Skills",
             "C:\\More Skills",
@@ -234,6 +249,14 @@ for (const width of [390, 1200])
           assert.equal(await workspaceSkill.getAttribute("aria-checked"), "true");
           assert.equal(await disabledSkill.getAttribute("aria-checked"), "false");
           assert(await disabledSkill.isDisabled());
+          const dependentSkill = page.locator(
+            '[data-testid="codex-skill-candidate"][data-name="plugin-with-incompatible-mcp"]',
+          );
+          assert.equal(await dependentSkill.getAttribute("aria-checked"), "false");
+          assert(!(await dependentSkill.isDisabled()));
+          const warning = dependentSkill.locator("..").getByTestId("codex-skill-mcp-warning");
+          assert((await warning.textContent()).includes("plugin:image-search:image_search"));
+          await dependentSkill.click();
           await userSkill.click();
           assert.equal(await workspaceSkill.getAttribute("aria-checked"), "true");
           await save.click();
@@ -245,6 +268,10 @@ for (const width of [390, 1200])
           assert.deepEqual((await settings.get()).codexSkillDisabledPaths, [
             "C:/Not-currently-listed/SKILL.md",
             "C:/Fixture/User/shared/SKILL.md",
+          ]);
+          assert.deepEqual((await settings.get()).codexSkillEnabledPaths, [
+            "C:/Not-currently-listed/OptIn/SKILL.md",
+            "C:/Fixture/Plugins/image-search/SKILL.md",
           ]);
           await page.reload();
           await page.waitForFunction(
@@ -259,10 +286,12 @@ for (const width of [390, 1200])
           await skillToggle.click();
           await compatible.waitFor();
           assert.equal(await compatible.getAttribute("aria-checked"), "false");
+          assert.equal(await nativeMcp.getAttribute("aria-checked"), "false");
           await userSkill.waitFor();
           assert.equal(await userSkill.getAttribute("aria-checked"), "false");
           assert.equal(await workspaceSkill.getAttribute("aria-checked"), "true");
           assert.equal(await mcp.inputValue(), "C:\\Codex Config\\config.toml");
+          assert.equal(await dependentSkill.getAttribute("aria-checked"), "true");
           await page.screenshot({
             path: join(evidence, `${width}-${locale}-${theme}.png`),
             fullPage: true,

@@ -2176,3 +2176,16 @@ node_repl browser-client → protocol broker → 已有 browserExecute 反向协
 Browser control scope 的 admission 失败可由下一次业务请求用原 ID 重试；未知结果保留释放责任，
 只清除失败 flight。关闭优先于新 admission，不自动重放业务命令。Host ambient 无实例 ID 的
 只读 list 汇总同一会话路由的受控页面；模型 execute、取消、释放仍严格隔离实例。
+
+## Codex resource selection extension (2026-11-06)
+
+Settings → existing Host preferences → immutable next-turn resource snapshot →
+official adapter → MCP and skill invocation configuration. Native MCP discovery
+stays enabled by default, independently of ZCode MCP sync; disabling it affects
+invocation configuration, not source files. Plugin-dependent skills default off
+only for incompatible companion MCP definitions; explicit per-path opt-ins can
+restore them with a named warning. Existing read-only catalogs and picker filters
+share the same compatibility and selection rules. No new tools, permissions,
+browser bridge, execution queue or delivery profile is introduced. Regressions
+cover native auth/disable preservation, shadowed names, opt-in/opt-out precedence,
+Host/CLI fallback and settings save/reload.

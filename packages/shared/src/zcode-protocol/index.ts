@@ -36,6 +36,9 @@ import {
   codexResourcePathSchema,
   codexSkillRootsSchema,
   codexSkillDisabledPathsSchema,
+  codexSkillEnabledPathsSchema,
+  codexSkillSyncCandidateSchema,
+  codexPluginMcpDependencySchema,
   codexMcpDisabledServersSchema,
   codexMcpSyncCandidateSchema,
 } from "../app-runtime-preferences.js";
@@ -903,6 +906,7 @@ export const zcodeMcpListResultSchema = z
   .object({
     statuses: z.record(z.string(), zcodeMcpServerStatusSnapshotSchema),
     codexSyncCandidates: z.array(codexMcpSyncCandidateSchema).optional(),
+    codexPluginMcpDependencies: z.array(codexPluginMcpDependencySchema).optional(),
   })
   .strict();
 export type ZCodeMcpListResult = z.infer<typeof zcodeMcpListResultSchema>;
@@ -2156,9 +2160,12 @@ export const zcodeSessionRuntimePreferencesResultSchema = z
     codexMcpConfigPath: codexResourcePathSchema.optional(),
     codexSkillRoots: codexSkillRootsSchema.optional(),
     codexSyncMcp: z.boolean().optional(),
+    codexUseNativeMcp: z.boolean().optional(),
     codexMcpDisabledServers: codexMcpDisabledServersSchema.optional(),
     codexSyncSkills: z.boolean().optional(),
     codexSkillDisabledPaths: codexSkillDisabledPathsSchema.optional(),
+    codexSkillEnabledPaths: codexSkillEnabledPathsSchema.optional(),
+    codexSkillCandidates: z.array(codexSkillSyncCandidateSchema).optional(),
     // 仅执行 Host→CLI；保留停用项以覆盖同名插件，绝不进入 AppSettings 或 UI 广播。
     codexMcpServers: z
       .array(

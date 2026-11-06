@@ -31,6 +31,7 @@ export const codexSkillPathSchema = codexResourcePathSchema.refine(
 export const codexSkillDisabledPathsSchema = z
   .array(codexSkillPathSchema)
   .max(MAX_CODEX_SELECTED_SKILL_PATHS);
+export const codexSkillEnabledPathsSchema = codexSkillDisabledPathsSchema;
 export const codexSkillSyncCandidateSchema = z
   .object({
     name: z.string().min(1),
@@ -38,6 +39,8 @@ export const codexSkillSyncCandidateSchema = z
     scope: z.enum(["workspace", "user", "plugin"]),
     enabled: z.boolean(),
     pluginName: z.string().optional(),
+    pluginId: z.string().min(1).max(512).optional(),
+    incompatibleMcpServers: z.array(z.string().min(1).max(256)).max(512).optional(),
   })
   .strict();
 export type CodexSkillSyncCandidate = z.infer<typeof codexSkillSyncCandidateSchema>;
@@ -80,6 +83,59 @@ export const codexMcpSyncCandidateSchema = z
   })
   .strict();
 export type CodexMcpSyncCandidate = z.infer<typeof codexMcpSyncCandidateSchema>;
+export const codexPluginMcpDependencySchema = z
+  .object({
+    pluginId: z.string().min(1).max(512),
+    mcpServerNames: z.array(codexMcpServerNameSchema).max(MAX_CODEX_MCP_SERVERS),
+    incompatibleMcpServers: z.array(codexMcpServerNameSchema).max(MAX_CODEX_MCP_SERVERS),
+  })
+  .strict();
+export type CodexPluginMcpDependency = z.infer<typeof codexPluginMcpDependencySchema>;
+
+/** 只按真实插件身份和配置兼容性关联；关闭、未信任或未同步不代表不兼容。 */
+export function getCodexPluginIncompatibleMcpServers(
+  pluginId: string | undefined,
+  dependencies: readonly CodexPluginMcpDependency[],
+  candidates: readonly CodexMcpSyncCandidate[],
+): string[] {
+  const dependency = dependencies.find((entry) => entry.pluginId === pluginId);
+  if (!pluginId || !dependency) return [];
+  const incompatible = new Set(
+    candidates.filter((entry) => !entry.compatible).map((entry) => entry.name),
+  );
+  return [
+    ...new Set([
+      ...dependency.incompatibleMcpServers,
+      ...dependency.mcpServerNames.filter((name) => incompatible.has(name)),
+    ]),
+  ];
+}
+
+export function createCodexSkillSelector(preferences: {
+  codexSkillDisabledPaths?: readonly string[];
+  codexSkillEnabledPaths?: readonly string[];
+}) {
+  // 目录最多有数千项；每次派生只建立一份索引，避免逐行扫描/归一化整份偏好而放大分配。
+  const excluded = new Set(preferences.codexSkillDisabledPaths?.map(getCodexSkillPathKey));
+  const included = new Set(preferences.codexSkillEnabledPaths?.map(getCodexSkillPathKey));
+  return (
+    candidate: Pick<CodexSkillSyncCandidate, "path" | "enabled" | "incompatibleMcpServers">,
+  ): boolean => {
+    const key = getCodexSkillPathKey(candidate.path);
+    return (
+      candidate.enabled &&
+      !excluded.has(key) &&
+      (!candidate.incompatibleMcpServers?.length || included.has(key))
+    );
+  };
+}
+
+export function isCodexSkillSelected(
+  candidate: Pick<CodexSkillSyncCandidate, "path" | "enabled" | "incompatibleMcpServers">,
+  preferences: Parameters<typeof createCodexSkillSelector>[0],
+): boolean {
+  return createCodexSkillSelector(preferences)(candidate);
+}
 
 interface CodexMcpCompatibilityInput {
   type?: unknown;

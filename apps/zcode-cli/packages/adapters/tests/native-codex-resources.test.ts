@@ -15,6 +15,9 @@ import {
   codexSkillDisabledPathsSchema,
   codexSkillSyncCandidateSchema,
   getCodexSkillPathKey,
+  isCodexSkillSelected,
+  getCodexPluginIncompatibleMcpServers,
+  codexSkillEnabledPathsSchema,
 } from "@zcode/shared";
 
 const roots: string[] = [];
@@ -37,6 +40,135 @@ const rpc = (native: Record<string, unknown> = {}, skills: unknown[] = []) => ({
 });
 
 describe("native Codex resource sources", () => {
+  it("uses real plugin identity and distinguishes incompatible configuration from disabled MCP", () => {
+    const deps = [
+      { pluginId: "same@one", mcpServerNames: ["bad", "off"], incompatibleMcpServers: [] },
+      { pluginId: "same@two", mcpServerNames: ["off"], incompatibleMcpServers: [] },
+      { pluginId: "browser@official", mcpServerNames: [], incompatibleMcpServers: ["node_repl"] },
+    ];
+    const candidates = [
+      { name: "bad", compatible: false, enabled: false },
+      { name: "off", compatible: true, enabled: false },
+    ];
+    expect(getCodexPluginIncompatibleMcpServers("same@one", deps, candidates)).toEqual(["bad"]);
+    expect(getCodexPluginIncompatibleMcpServers("same@two", deps, candidates)).toEqual([]);
+    expect(getCodexPluginIncompatibleMcpServers("browser@official", deps, candidates)).toEqual([
+      "node_repl",
+    ]);
+    expect(getCodexPluginIncompatibleMcpServers(undefined, deps, candidates)).toEqual([]);
+    expect(appSettingsSchema.parse({}).codexSkillEnabledPaths).toEqual([]);
+    expect(codexSkillEnabledPathsSchema.safeParse(["relative/SKILL.md"]).success).toBe(false);
+    expect(codexSkillEnabledPathsSchema.safeParse(Array(4097).fill("/a/SKILL.md")).success).toBe(
+      false,
+    );
+  });
+
+  it("defaults dependent skills off, preserves explicit opt-in, and never reads excluded missing files", async () => {
+    const root = await fixture();
+    const path = join(root, "SKILL.md"),
+      missing = join(root, "missing", "SKILL.md");
+    await writeFile(path, "---\nname: dependent\ndescription: test\n---\nbody");
+    const candidates = [path, missing].map((path) => ({
+      name: "same",
+      path,
+      scope: "plugin" as const,
+      pluginId: "same@one",
+      enabled: true,
+      incompatibleMcpServers: ["bad"],
+    }));
+    const snapshot = {
+      preferences: { codexSyncSkills: true },
+      skillPaths: [path, missing],
+      skillCandidates: candidates,
+    };
+    expect((await prepareNativeCodexResources(snapshot)).skillPaths).toEqual([]);
+    expect(
+      (
+        await prepareNativeCodexResources({
+          ...snapshot,
+          preferences: { ...snapshot.preferences, codexSkillEnabledPaths: [path] },
+        })
+      ).skillPaths,
+    ).toEqual([await realpath(path)]);
+    const explicit = { codexSkillEnabledPaths: [path], codexSkillDisabledPaths: [path] };
+    expect(isCodexSkillSelected(candidates[0]!, explicit)).toBe(false);
+    expect(
+      isCodexSkillSelected(
+        { ...candidates[0]!, enabled: false },
+        { codexSkillEnabledPaths: [path] },
+      ),
+    ).toBe(false);
+    expect(
+      (
+        await prepareNativeCodexResources({
+          ...snapshot,
+          preferences: { ...snapshot.preferences, ...explicit },
+        })
+      ).skillPaths,
+    ).toEqual([]);
+    expect(candidates[0]!.enabled).toBe(true);
+  });
+
+  it("keeps native discovery by default and lets the switch suppress it without synchronization", async () => {
+    expect(appSettingsSchema.parse({}).codexUseNativeMcp).toBe(true);
+    expect(appSettingsPatchSchema.parse({ codexUseNativeMcp: false })).toEqual({
+      codexUseNativeMcp: false,
+    });
+    const native = {
+      oauth: { url: "https://fixture.test", enabled: true },
+      disabled: { command: "node", enabled: false },
+    };
+    const connection = rpc(native);
+    expect(
+      await configureNativeCodexResources(
+        connection,
+        await prepareNativeCodexResources({ preferences: {} }),
+        "workspace",
+      ),
+    ).toEqual({});
+    expect(connection.request).not.toHaveBeenCalled();
+    expect(
+      await configureNativeCodexResources(
+        connection,
+        await prepareNativeCodexResources({ preferences: { codexUseNativeMcp: false } }),
+        "workspace",
+      ),
+    ).toEqual({ mcp_servers: { oauth: { enabled: false }, disabled: { enabled: false } } });
+    expect(native.oauth.enabled).toBe(true);
+  });
+
+  it("combines native and synchronized MCPs while shadowing excluded same-name source definitions", async () => {
+    const native = {
+      oauth: { url: "https://fixture.test", bearer_token_env_var: "TOKEN" },
+      disabled: { enabled: false },
+      selected: { url: "https://old.test" },
+      excluded: { command: "old" },
+    };
+    const config = await configureNativeCodexResources(
+      rpc(native),
+      await prepareNativeCodexResources({
+        preferences: { codexSyncMcp: true },
+        mcpServers: { selected: { type: "stdio", command: "node" } },
+        mcpSourceNames: ["selected", "excluded"],
+      }),
+      "workspace",
+    );
+    const servers = config.mcp_servers as Record<string, unknown>;
+    expect(servers).not.toHaveProperty("oauth");
+    expect(servers).not.toHaveProperty("disabled");
+    expect(servers.selected).toEqual({ enabled: false });
+    expect(servers.excluded).toEqual({ enabled: false });
+    expect(Object.values(servers)).toContainEqual({ enabled: true, command: "node", args: [] });
+    expect(native.oauth).toEqual({ url: "https://fixture.test", bearer_token_env_var: "TOKEN" });
+    expect(native.disabled.enabled).toBe(false);
+    const empty = await configureNativeCodexResources(
+      rpc(native),
+      await prepareNativeCodexResources({ preferences: { codexSyncMcp: true }, mcpServers: {} }),
+      "workspace",
+    );
+    expect(empty).toEqual({ mcp_servers: {} });
+  });
+
   it("validates bounded skill exclusions and metadata without bodies", () => {
     expect(appSettingsSchema.parse({}).codexSkillDisabledPaths).toEqual([]);
     expect(
@@ -118,7 +250,7 @@ describe("native Codex resource sources", () => {
       'model="do-not-import"\n[mcp_servers.sample]\ncommand="node"\nargs=["server.js"]\n[mcp_servers.sample.env]\nTOKEN="secret-not-in-arguments"\n';
     await writeFile(file, source);
     const prepared = await prepareNativeCodexResources({
-      preferences: { codexMcpConfigPath: file },
+      preferences: { codexMcpConfigPath: file, codexUseNativeMcp: false },
     });
     const connection = rpc({ inherited: { enabled: true } });
     const config = await configureNativeCodexResources(connection, prepared, root);
@@ -133,7 +265,11 @@ describe("native Codex resource sources", () => {
 
   it("sync ignores saved custom paths, omits disabled servers and retains trusted settings", async () => {
     const prepared = await prepareNativeCodexResources({
-      preferences: { codexSyncMcp: true, codexMcpConfigPath: "missing-relative.toml" },
+      preferences: {
+        codexSyncMcp: true,
+        codexMcpConfigPath: "missing-relative.toml",
+        codexUseNativeMcp: false,
+      },
       mcpServers: {
         "plugin:example:stdio": {
           type: "stdio",
@@ -176,7 +312,10 @@ describe("native Codex resource sources", () => {
           good: { type: "stdio", command: "node" },
         },
       }),
-    ).toEqual({ mcpServers: { good: { enabled: true, command: "node", args: [] } } });
+    ).toEqual({
+      mcpSourceNames: ["example", "good"],
+      mcpServers: { good: { enabled: true, command: "node", args: [] } },
+    });
   });
 
   it.each([
@@ -224,7 +363,7 @@ describe("native Codex resource sources", () => {
           "broken\n\u202e": { type: "sse", url: "https://example.test" },
         },
       }),
-    ).toEqual({ mcpServers: {} });
+    ).toEqual({ mcpSourceNames: [], mcpServers: {} });
   });
 
   it("defaults compatible new servers on and retains manual exclusions across compatibility changes", async () => {

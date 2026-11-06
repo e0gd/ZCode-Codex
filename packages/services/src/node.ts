@@ -43,7 +43,7 @@ import {
 } from "./onboarding/localUsageEvidence.js";
 import {
   buildLocalMediaPreviewUrl,
-  getCodexSkillPathKey,
+  createCodexSkillSelector,
   type DynamicWorkflowMode,
   type ProviderProvisioningSourceTrigger,
 } from "@zcode/shared";
@@ -1662,7 +1662,11 @@ export function createLocalServices(options: {
       }),
   };
   // mcpSync/hooks 里引用 zcodeAgentService 的闭包是惰性调用，声明顺序不影响初始化。
-  const skillsService = createSkillsService({ isDesktopRuntime: true });
+  const skillsService = createSkillsService({
+    isDesktopRuntime: true,
+    readCodexPluginMcpDependencies: (params) =>
+      mcpSyncService.listCodexPluginMcpDependencies(params),
+  });
   const mcpSyncService = createMcpSyncService({
     // mcp/list 的 host 消费点收拢到 mcpSync 服务；真实状态检查仍在 agent 进程。
     listMcpServerStatuses: (params) => zcodeAgentService.listMcpServerStatuses(params),
@@ -2476,24 +2480,16 @@ export function createLocalServices(options: {
                     settings.codexMcpDisabledServers ?? [],
                   ).mcpServers
                 : undefined;
-            const disabledCodexSkillPaths = new Set(
-              (settings.codexSkillDisabledPaths ?? []).map(getCodexSkillPathKey),
-            );
-            const codexSkillPaths =
+            const codexSkillCandidates =
               scope === "native-codex-resources" && settings.codexSyncSkills === true
-                ? (
-                    await skillsService.list({
-                      workspacePath: workspace.workspacePath,
-                      workspaceIdentity: workspace.workspaceIdentity,
-                    })
-                  ).skills
-                    .filter(
-                      (skill) =>
-                        skill.enabled !== false &&
-                        !disabledCodexSkillPaths.has(getCodexSkillPathKey(skill.path)),
-                    )
-                    .map((skill) => skill.path)
+                ? await skillsService.listCodexSyncCandidates({
+                    workspacePath: workspace.workspacePath,
+                    workspaceIdentity: workspace.workspaceIdentity,
+                  })
                 : undefined;
+            const codexSkillPaths = codexSkillCandidates
+              ?.filter(createCodexSkillSelector(settings))
+              .map((skill) => skill.path);
             const modelContextBudgetStrategy = DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY;
             return {
               askUserQuestionAutoResolutionEnabled:
@@ -2505,9 +2501,12 @@ export function createLocalServices(options: {
               codexMcpConfigPath: settings.codexMcpConfigPath ?? "",
               codexSkillRoots: settings.codexSkillRoots ?? [],
               codexSyncMcp: settings.codexSyncMcp === true,
+              codexUseNativeMcp: settings.codexUseNativeMcp !== false,
               codexMcpDisabledServers: settings.codexMcpDisabledServers ?? [],
               codexSyncSkills: settings.codexSyncSkills === true,
               codexSkillDisabledPaths: settings.codexSkillDisabledPaths ?? [],
+              codexSkillEnabledPaths: settings.codexSkillEnabledPaths ?? [],
+              ...(codexSkillCandidates ? { codexSkillCandidates } : {}),
               ...(codexMcpServers ? { codexMcpServers } : {}),
               ...(codexSkillPaths ? { codexSkillPaths } : {}),
               modelContextBudgetStrategy,

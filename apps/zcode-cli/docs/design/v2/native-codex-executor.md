@@ -1,5 +1,20 @@
 # Native Codex executor
 
+Resource snapshots retain native MCP discovery by default (`codexUseNativeMcp`).
+Only selected-source known names are shadowed; the false setting suppresses all
+native entries for the invocation even without synchronization. Configuration and
+OAuth credentials remain owned by official Codex; browser runtime capabilities
+are not provided by this switch. `mcpSourceNames` preserves override tombstones.
+
+Plugin skill defaults use actual plugin identity and configuration incompatibility,
+including official host MCP dependencies. The shared selection rule checks ZCode
+enable state, explicit exclusions, incompatible dependency names and explicit
+`codexSkillEnabledPaths` opt-ins. Read-only catalog and execution use the same
+next-turn snapshot. Companion MCP enable/trust/manual exclusion/sync-off are not
+incompatibility. Metadata crosses strict Host/CLI schemas without skill bodies or
+MCP credentials. Filter paths before filesystem validation and preserve in-flight
+turn snapshots and ordinary ZCode behavior.
+
 Native notification admission is bounded per executor turn, including notifications buffered before turn/start responds and across provider-alias reconnections. At most 1024 pending notifications and 32 MiB of UTF-8 JSON notification data may await serial delivery; the in-flight handler counts until it settles. Exceeding either bound fails the turn with NATIVE_CODEX_EVENT_BACKLOG_LIMIT, closes the native connection and preserves dispatch receipts. It never silently drops events or replays the input. This protects against a confirmed unbounded notification queue; it does not establish that queue growth caused the reported 2026-11-04 heap crash.
 
 This CLI integration selects the execution engine for each session from its owning project's immutable setting, defaulting to ZCode. The official Codex app-server owns its complete model/tool loop for Codex projects. ZCode retains its existing command admission, foreground cancellation, session persistence and desktop/mobile event projection. See the [project engine specification](../../../../../docs/specs/project-execution-engine.md) and [cross-host execution contract](../../../../../docs/runtime-tools/native-codex-executor.md) for ownership, crash reconciliation and acceptance requirements.

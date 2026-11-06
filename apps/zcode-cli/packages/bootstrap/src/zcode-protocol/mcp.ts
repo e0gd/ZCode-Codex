@@ -21,6 +21,7 @@ import {
 import { StartupTimer, startupNow } from "../startup-logging.js";
 import { getCliStorageRoot } from "../app/paths.js";
 import { resolveStartupPlugins } from "../app/startup-marks.js";
+import { resolveOfficialPluginHostMcpServerNames } from "../app/official-plugin-definitions.js";
 import { protocolMcpServersToRuntimeMcpConfig } from "./protocol-mcp-config.js";
 import { parseParams, type ZCodeProtocolAgentServerContext } from "./server-types.js";
 
@@ -146,7 +147,19 @@ export async function listMcpServers(
         }),
     );
     // 目录只返回兼容性元数据，不返回 URL、命令、认证或环境变量；status 路径不建立连接。
-    return zcodeMcpListResultSchema.parse({ statuses: reviewed, codexSyncCandidates });
+    const codexPluginMcpDependencies = pluginOutcome.plugins
+      .filter((plugin) => plugin.enabled)
+      .map((plugin) => ({
+        pluginId: plugin.id,
+        mcpServerNames: plugin.mcpServerNames,
+        // 官方浏览器/桌面插件依赖内部 broker，不能凭用户同名 MCP 或插件显示名推断兼容。
+        incompatibleMcpServers: resolveOfficialPluginHostMcpServerNames(plugin.id),
+      }));
+    return zcodeMcpListResultSchema.parse({
+      statuses: reviewed,
+      codexSyncCandidates,
+      codexPluginMcpDependencies,
+    });
   };
   if (params.mode === "status") {
     // 只读轮询曾接管共享 lease，取消其他工作区的 OAuth；仅显式连接允许切换 owner。

@@ -37,6 +37,7 @@ import {
   zcodePluginsValidateResultSchema,
 } from "@zcode/shared";
 import { getCliStorageRoot, getPluginStorageRoot } from "../src/app/paths.js";
+import { listMcpServers } from "../src/zcode-protocol/mcp.js";
 import { installZCodeMarketplacePlugin } from "../src/plugins.js";
 import {
   addPluginMarketplace,
@@ -53,6 +54,68 @@ import type { ZCodeProtocolAgentServerContext } from "../src/zcode-protocol/serv
 
 afterAll(async () => {
   await rm(FAKE_HOME, { force: true, recursive: true });
+});
+
+it("lists plugin dependencies with real identity and configuration compatibility without connecting", async () => {
+  const root = await mkdtemp(join(tmpdir(), "zcode-plugin-codex-dependencies-"));
+  const pluginRoot = join(root, "plugin"),
+    userConfigPath = join(FAKE_HOME, ".zcode", "cli", "config.json");
+  const connectConfiguredServers = vi.fn();
+  try {
+    await writeTestFile(
+      join(pluginRoot, ".claude-plugin", "plugin.json"),
+      JSON.stringify({
+        name: "browser-use",
+        mcpServers: {
+          broken: { type: "sse", url: "https://private-fixture.test" },
+          off: { command: "never-launch-dependency-fixture", enabled: false },
+        },
+      }),
+    );
+    await writeTestFile(
+      userConfigPath,
+      JSON.stringify({
+        plugins: { dirs: [pluginRoot], enabledPlugins: { "browser-use@inline": true } },
+      }),
+    );
+    const result = await listMcpServers(
+      {
+        deps: {
+          env: { ...process.env, ZCODE_STORAGE_DIR: join(root, "cli") },
+          mcpPort: { connectConfiguredServers },
+        },
+      } as unknown as ZCodeProtocolAgentServerContext,
+      {
+        workspace: { workspacePath: root, workspaceKey: root },
+        mode: "status",
+        mcpServers: [],
+      },
+    );
+    expect(result.codexPluginMcpDependencies).toContainEqual({
+      pluginId: "browser-use@inline",
+      mcpServerNames: ["plugin:browser-use:broken", "plugin:browser-use:off"],
+      incompatibleMcpServers: [],
+    });
+    expect(result.codexSyncCandidates).toContainEqual({
+      name: "plugin:browser-use:broken",
+      compatible: false,
+      enabled: true,
+      reason: "sse",
+    });
+    expect(result.codexSyncCandidates).toContainEqual({
+      name: "plugin:browser-use:off",
+      compatible: true,
+      enabled: false,
+      reason: "disabled",
+    });
+    expect(JSON.stringify(result.codexPluginMcpDependencies)).not.toMatch(
+      /private-fixture|never-launch/,
+    );
+    expect(connectConfiguredServers).not.toHaveBeenCalled();
+  } finally {
+    await rm(userConfigPath, { force: true });
+    await rm(root, { force: true, recursive: true });
+  }
 });
 
 // 协议契约层面的回归: 确保 plugins/list 与 plugins/setEnabled 已注册且 schema 可用。

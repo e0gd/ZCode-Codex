@@ -46,7 +46,12 @@ import {
   type ExecutionShellSelection,
   type MessageId,
 } from "@zcode/contracts";
-import { isRemoteWorkspaceIdentity, resolveZCodeRuntimeEnv } from "@zcode/shared";
+import {
+  isRemoteWorkspaceIdentity,
+  resolveZCodeRuntimeEnv,
+  type CodexPluginMcpDependency,
+} from "@zcode/shared";
+import { resolveOfficialPluginHostMcpServerNames } from "./official-plugin-definitions.js";
 import {
   ZCODE_ATTACHMENT_FAULT_CODES,
   ZCodeAttachmentFaultError,
@@ -882,6 +887,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     };
     // Codex picker 与执行共用资源 owner；只读发现不能初始化 Core context 或启动 ZCode MCP。
     const resolveCurrentNativeResources = async (userInput?: string) => {
+      let pluginDependencies: CodexPluginMcpDependency[] = [];
       const snapshot = await resolveNativeCodexResourceSnapshot({
         resolvePreferences: options.resolveCodexResourcePreferences,
         allowsMcpServer: (name, config) => workspaceMcpTrust.allows(name, config),
@@ -911,6 +917,13 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
             startupTimer,
             workingDirectory,
           });
+          pluginDependencies = freshPlugins.plugins
+            .filter((plugin) => plugin.enabled)
+            .map((plugin) => ({
+              pluginId: plugin.id,
+              mcpServerNames: plugin.mcpServerNames,
+              incompatibleMcpServers: resolveOfficialPluginHostMcpServerNames(plugin.id),
+            }));
           const freshBuiltIns = Object.fromEntries(
             Object.entries(
               resolveBuiltInNodeReplMcpServers({
@@ -939,21 +952,44 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
             subagentOutputRootDir: join(cliStorageRoot, "agents"),
             workingDirectory,
           });
-          if (!fresh.runtimeConfig.mcp?.enabled) return {};
           // node_repl 是 ZCode 内部 broker 宿主，依赖专用协议/权限；不能当外部 MCP 注入 Codex。
           return Object.fromEntries(
-            Object.entries(fresh.runtimeConfig.mcp.servers ?? {}).filter(
-              ([name, config]) =>
-                name !== BUILT_IN_NODE_REPL_SERVER_NAME || config.source?.kind !== "builtin",
-            ),
+            Object.entries(fresh.runtimeConfig.mcp?.servers ?? {})
+              .filter(
+                ([name, config]) =>
+                  name !== BUILT_IN_NODE_REPL_SERVER_NAME || config.source?.kind !== "builtin",
+              )
+              .map(([name, config]) => [
+                name,
+                fresh.runtimeConfig.mcp?.enabled ? config : { ...config, enabled: false },
+              ]),
           );
         },
         discoverSkillPaths: async () => {
           return (await readCurrentNativeSkills()).skills.map((skill) => skill.path);
         },
+        discoverSkillCandidates: async () =>
+          (await readCurrentNativeSkills()).skills.map((skill) => ({
+            name: skill.name,
+            path: skill.path,
+            enabled: true,
+            scope:
+              skill.source === "plugin"
+                ? ("plugin" as const)
+                : skill.scope === "project"
+                  ? ("workspace" as const)
+                  : ("user" as const),
+            ...(skill.pluginId ? { pluginId: skill.pluginId } : {}),
+            ...(skill.pluginName ? { pluginName: skill.pluginName } : {}),
+          })),
+        discoverPluginMcpDependencies: () => pluginDependencies,
       });
       if (userInput !== undefined) {
-        snapshot.pluginReferenceWarning = buildNativeCodexPluginReferenceWarning(userInput, pluginReferenceCatalog, snapshot);
+        snapshot.pluginReferenceWarning = buildNativeCodexPluginReferenceWarning(
+          userInput,
+          pluginReferenceCatalog,
+          snapshot,
+        );
       }
       return snapshot;
     };

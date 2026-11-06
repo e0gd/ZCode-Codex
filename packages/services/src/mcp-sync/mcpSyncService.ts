@@ -14,7 +14,11 @@ import type {
   SettingsDirectorySource,
   ZCodeAgentMcpServer,
 } from "@zcode/shared";
-import { convertToZCodeAgentMcpServer, getCodexMcpCompatibility } from "@zcode/shared";
+import {
+  convertToZCodeAgentMcpServer,
+  getCodexMcpCompatibility,
+  getCodexPluginIncompatibleMcpServers,
+} from "@zcode/shared";
 import type { IMcpSyncService } from "./mcpSync.js";
 import { createMcpDataSyncMethods } from "../data-sync/node.js";
 import { createServiceLogger } from "../logger/serviceLogger.js";
@@ -82,33 +86,61 @@ export interface McpSyncServiceDependencies {
 export function createMcpSyncService(
   dependencies: McpSyncServiceDependencies = {},
 ): IMcpSyncService {
+  const readCodexCatalog = async (
+    params: Parameters<IMcpSyncService["listCodexMcpSyncCandidates"]>[0],
+  ) => {
+    if (!dependencies.listMcpServerStatuses) {
+      throw new Error("Codex MCP compatibility listing is unavailable in this runtime");
+    }
+    const directory = await loadMcpFromUserDirectory({ workspacePath: params.workspacePath });
+    const snapshot = createCodexMcpDirectorySnapshot(directory.servers);
+    const result = await dependencies.listMcpServerStatuses({
+      ...params,
+      mode: "status",
+      mcpServers: snapshot.mcpServers.map(({ server }) => server),
+    });
+    if (!result.codexSyncCandidates) {
+      throw new Error("Update the executing Host to list Codex MCP compatibility");
+    }
+    const candidates = new Map(result.codexSyncCandidates.map((entry) => [entry.name, entry]));
+    for (const entry of snapshot.candidates) {
+      const runtime = candidates.get(entry.name);
+      // 原始认证配置在严格 DTO 中以停用墓碑占位；列表必须恢复其真实不兼容原因。
+      // 兼容配置的项目信任状态仍以 CLI 的同一执行 Host 为准。
+      candidates.set(
+        entry.name,
+        !entry.compatible || !entry.enabled
+          ? entry
+          : runtime?.reason === "untrusted"
+            ? { ...entry, enabled: false, reason: "untrusted" }
+            : (runtime ?? { ...entry, enabled: false, reason: "invalid_config" }),
+      );
+    }
+    return {
+      candidates: [...candidates.values()].sort((left, right) =>
+        left.name.localeCompare(right.name),
+      ),
+      dependencies: result.codexPluginMcpDependencies,
+    };
+  };
   return {
     ...createMcpDataSyncMethods(),
     async listCodexMcpSyncCandidates(params) {
-      if (!dependencies.listMcpServerStatuses) {
-        throw new Error("Codex MCP compatibility listing is unavailable in this runtime");
-      }
-      const directory = await loadMcpFromUserDirectory({ workspacePath: params.workspacePath });
-      const snapshot = createCodexMcpDirectorySnapshot(directory.servers);
-      const result = await dependencies.listMcpServerStatuses({
-        ...params,
-        mode: "status",
-        mcpServers: snapshot.mcpServers.map(({ server }) => server),
-      });
-      if (!result.codexSyncCandidates) {
-        throw new Error("Update the executing Host to list Codex MCP compatibility");
-      }
-      const candidates = new Map(result.codexSyncCandidates.map((entry) => [entry.name, entry]));
-      for (const entry of snapshot.candidates) {
-        const runtime = candidates.get(entry.name);
-        // 原始认证配置在严格 DTO 中以停用墓碑占位；列表必须恢复其真实不兼容原因。
-        // 兼容配置的项目信任状态仍以 CLI 的同一执行 Host 为准。
-        candidates.set(entry.name,
-          !entry.compatible || !entry.enabled ? entry
-            : runtime?.reason === "untrusted" ? { ...entry, enabled: false, reason: "untrusted" }
-              : runtime ?? { ...entry, enabled: false, reason: "invalid_config" });
-      }
-      return [...candidates.values()].sort((left, right) => left.name.localeCompare(right.name));
+      return (await readCodexCatalog(params)).candidates;
+    },
+    async listCodexPluginMcpDependencies(params) {
+      const catalog = await readCodexCatalog(params);
+      const pluginDependencies = catalog.dependencies;
+      if (!pluginDependencies)
+        throw new Error("Update the executing Host to read plugin MCP dependencies");
+      return pluginDependencies.map((entry) => ({
+        ...entry,
+        incompatibleMcpServers: getCodexPluginIncompatibleMcpServers(
+          entry.pluginId,
+          pluginDependencies,
+          catalog.candidates,
+        ),
+      }));
     },
     async loadMcpFromUserDirectory(request) {
       return loadMcpFromUserDirectory(request);
@@ -145,11 +177,15 @@ export function createCodexMcpDirectorySnapshot(
       const config = entry.config ?? {};
       const enabled = entry.enabled !== false && config.enabled !== false;
       const compatibility = getCodexMcpCompatibility(config, entry.name);
-      const scope = entry.scope === "workspace" ? "workspace" as const : "user" as const;
+      const scope = entry.scope === "workspace" ? ("workspace" as const) : ("user" as const);
       const selected = enabled && compatibility.compatible && !excluded.has(entry.name);
-      const converted = selected ? convertToZCodeAgentMcpServer(entry.name, config, scope) : undefined;
-      const effectiveCompatibility = selected && !converted
-        ? { compatible: false, reason: "invalid_config" as const } : compatibility;
+      const converted = selected
+        ? convertToZCodeAgentMcpServer(entry.name, config, scope)
+        : undefined;
+      const effectiveCompatibility =
+        selected && !converted
+          ? { compatible: false, reason: "invalid_config" as const }
+          : compatibility;
       candidates.set(entry.name, {
         name: entry.name,
         ...effectiveCompatibility,

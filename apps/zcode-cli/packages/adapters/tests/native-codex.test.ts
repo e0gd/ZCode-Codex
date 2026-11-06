@@ -172,7 +172,7 @@ describe("native resource preference refresh", () => {
       return false;
     });
     const snapshots = [
-      { preferences: { codexSyncMcp: true, codexSyncSkills: true }, mcpServers: { synced: { type: "stdio" as const, command: "node", env: { TOKEN: "fixture-secret" } } }, skillPaths: [skill], pluginReferenceWarning: "Package demo has unavailable MCP: missing. You may invoke available skills." },
+      { preferences: { codexSyncMcp: true, codexSyncSkills: true, codexUseNativeMcp: false }, mcpServers: { synced: { type: "stdio" as const, command: "node", env: { TOKEN: "fixture-secret" } } }, skillPaths: [skill], pluginReferenceWarning: "Package demo has unavailable MCP: missing. You may invoke available skills." },
       { preferences: { codexMcpConfigPath: customFile, codexSkillRoots: [skillDirectory] }, pluginReferenceWarning: "" },
       { preferences: {} },
     ];
@@ -191,6 +191,7 @@ describe("native resource preference refresh", () => {
     expect(starts[0]!.params?.config).toMatchObject({ mcp_servers: { native: { enabled: false } }, "skills.config": [{ path: skill, enabled: true }, expect.objectContaining({ enabled: false })] });
     expect(Object.values((starts[0]!.params?.config as { mcp_servers: object }).mcp_servers)).toContainEqual(expect.objectContaining({ env: { TOKEN: "fixture-secret" } }));
     expect(starts[1]!.params?.config).not.toHaveProperty("skills.config");
+    expect((starts[1]!.params?.config as { mcp_servers: object }).mcp_servers).not.toHaveProperty("native");
     expect(starts[2]!.params).not.toHaveProperty("config");
     expect(mock.spawn.mock.calls.flatMap(call => call[1]).join(" ")).not.toContain("fixture-secret");
     expect(rpc.calls.filter(call => call.method === "skills/extraRoots/set")).toHaveLength(2);

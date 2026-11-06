@@ -81,6 +81,44 @@ describe("native Codex resource snapshots", () => {
     expect(bounded.length).toBeLessThan(2500);
     expect(bounded).not.toContain("<injected>");
   });
+  it("resolves plugin defaults from raw MCP compatibility even with MCP sync off and snapshots opt-ins", async () => {
+    const path = "/plugins/dependent/SKILL.md",
+      safe = "/plugins/safe/SKILL.md";
+    const enabledPaths: string[] = [];
+    const input = {
+      resolvePreferences: async () => ({
+        preferences: {
+          codexSyncSkills: true,
+          codexSyncMcp: false,
+          codexSkillEnabledPaths: enabledPaths,
+        },
+      }),
+      discoverMcpServers: vi.fn(async () => ({
+        bad: { type: "sse" as const, url: "https://fixture.test" },
+        disabled: { type: "stdio" as const, command: "node", enabled: false },
+      })),
+      discoverSkillPaths: vi.fn(),
+      discoverSkillCandidates: async () => [
+        { name: "same", path, scope: "plugin" as const, enabled: true, pluginId: "same@one" },
+        { name: "same", path: safe, scope: "plugin" as const, enabled: true, pluginId: "same@two" },
+      ],
+      discoverPluginMcpDependencies: () => [
+        { pluginId: "same@one", mcpServerNames: ["bad"], incompatibleMcpServers: [] },
+        { pluginId: "same@two", mcpServerNames: ["disabled"], incompatibleMcpServers: [] },
+      ],
+      allowsMcpServer: vi.fn(),
+    };
+    const first = await resolveNativeCodexResourceSnapshot(input);
+    expect(first.skillPaths).toEqual([safe]);
+    expect(first.skillCandidates?.[0]?.incompatibleMcpServers).toEqual(["bad"]);
+    enabledPaths.push(path);
+    expect((await resolveNativeCodexResourceSnapshot(input)).skillPaths).toEqual([path, safe]);
+    expect(first.preferences.codexSkillEnabledPaths).toEqual([]);
+    expect(input.allowsMcpServer).not.toHaveBeenCalled();
+    expect(input.discoverSkillPaths).not.toHaveBeenCalled();
+    expect(first.mcpServers).toBeUndefined();
+  });
+
   it("refreshes per-skill exclusions without mutating previous turns or discovering when off", async () => {
     let excluded = ["C:\\Skills\\Same\\SKILL.md"];
     let sync = true;

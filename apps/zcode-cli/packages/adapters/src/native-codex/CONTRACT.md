@@ -39,8 +39,10 @@ dispatch receipts; no input is replayed and no queued fact is silently discarded
 `resolveResources` returns one turn's Host-owned resource preferences and trusted
 effective ZCode MCP/skill snapshot. The adapter reads only an explicitly selected
 Codex TOML file's MCP table, expands explicit skill directories to concrete skill
-roots, and applies invocation-local overrides. Sync suppresses native-only MCPs
-and non-system skills before admitting a thread/turn, while preserving ZCode's
+roots, and applies invocation-local overrides. Native MCPs remain available by
+default; codexUseNativeMcp=false suppresses them, while selected-source known names
+shadow same-name native entries. Skill sync suppresses unselected non-system skills
+before admitting a thread/turn, while preserving ZCode's
 enabled/trust decisions. MCP credentials travel over local stdio JSON config,
 never new command-line arguments. No configuration, credential or skill source is
 rewritten or copied. Relative/unreadable paths fail before input dispatch;

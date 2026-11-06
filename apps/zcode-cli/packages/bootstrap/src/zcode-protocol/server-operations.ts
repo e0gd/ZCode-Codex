@@ -3533,9 +3533,11 @@ async function createRecord(
           codexMcpConfigPath: current.codexMcpConfigPath,
           codexSkillRoots: current.codexSkillRoots,
           codexSyncMcp: current.codexSyncMcp,
+          codexUseNativeMcp: current.codexUseNativeMcp,
           codexMcpDisabledServers: current.codexMcpDisabledServers,
           codexSyncSkills: current.codexSyncSkills,
           codexSkillDisabledPaths: current.codexSkillDisabledPaths,
+          codexSkillEnabledPaths: current.codexSkillEnabledPaths,
         },
         ...(current.codexMcpServers === undefined
           ? {}
@@ -3551,6 +3553,9 @@ async function createRecord(
               ),
             }),
         ...(current.codexSkillPaths === undefined ? {} : { skillPaths: current.codexSkillPaths }),
+        ...(current.codexSkillCandidates === undefined
+          ? {}
+          : { skillCandidates: current.codexSkillCandidates }),
       };
     },
     env: context.deps.env,

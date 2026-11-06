@@ -5,13 +5,19 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import type { McpServerConfig } from "@zcode/contracts";
 import type { NativeCodexResourceSnapshot } from "./contract.js";
-import { getCodexMcpCompatibility, getCodexSkillPathKey } from "@zcode/shared";
+import {
+  getCodexMcpCompatibility,
+  getCodexSkillPathKey,
+  createCodexSkillSelector,
+} from "@zcode/shared";
 
 type RecordValue = Record<string, unknown>;
 type ResourceConnection = { request(method: string, params: RecordValue): Promise<unknown> };
 export interface PreparedNativeCodexResources {
   pluginReferenceWarning?: string;
   mcpServers?: Record<string, RecordValue>;
+  useNativeMcp?: boolean;
+  mcpSourceNames?: string[];
   skillRoots?: string[];
   skillPaths?: string[];
 }
@@ -170,9 +176,13 @@ export async function prepareNativeCodexResources(
 ): Promise<PreparedNativeCodexResources> {
   const preferences = snapshot?.preferences ?? {};
   const prepared: PreparedNativeCodexResources = {};
+  if (preferences.codexUseNativeMcp === false) prepared.useNativeMcp = false;
   if (preferences.codexSyncMcp) {
     if (!snapshot?.mcpServers)
       throw new Error("ZCode MCP synchronization snapshot is unavailable.");
+    prepared.mcpSourceNames = [
+      ...(snapshot.mcpSourceNames ?? Object.keys(snapshot.mcpServers)),
+    ].filter((name) => name && name.length <= maximumServerNameLength && !hasControl(name));
     // 配置兼容性与目录列表共用同一判定，直接调用 adapter 也不能复活不兼容或手动排除的项。
     prepared.mcpServers = Object.fromEntries(
       Object.entries(snapshot.mcpServers)
@@ -197,10 +207,13 @@ export async function prepareNativeCodexResources(
   if (preferences.codexSyncSkills) {
     if (!snapshot?.skillPaths)
       throw new Error("ZCode skill synchronization snapshot is unavailable.");
-    const excluded = new Set(preferences.codexSkillDisabledPaths?.map(getCodexSkillPathKey));
+    const candidates = new Map(
+      snapshot.skillCandidates?.map((entry) => [getCodexSkillPathKey(entry.path), entry]),
+    );
+    const selectSkill = createCodexSkillSelector(preferences);
     // 排除项先过滤，不能因已取消同步的失效路径阻断整轮对话。
-    const selected = snapshot.skillPaths.filter(
-      (path) => !excluded.has(getCodexSkillPathKey(path)),
+    const selected = snapshot.skillPaths.filter((path) =>
+      selectSkill(candidates.get(getCodexSkillPathKey(path)) ?? { path, enabled: true }),
     );
     const paths = await Promise.all(selected.map(checkedSkillPath));
     prepared.skillPaths = [...new Map(paths.map((path) => [pathKey(path), path])).values()];
@@ -208,7 +221,8 @@ export async function prepareNativeCodexResources(
   } else if (preferences.codexSkillRoots?.length) {
     prepared.skillRoots = await expandSkillRoots(preferences.codexSkillRoots);
   } else if (legacy.skillRoots?.length) prepared.skillRoots = [...legacy.skillRoots];
-  if (snapshot?.pluginReferenceWarning !== undefined) prepared.pluginReferenceWarning = snapshot.pluginReferenceWarning;
+  if (snapshot?.pluginReferenceWarning !== undefined)
+    prepared.pluginReferenceWarning = snapshot.pluginReferenceWarning;
   return prepared;
 }
 
@@ -219,7 +233,7 @@ export async function configureNativeCodexResources(
   workspace: string,
 ): Promise<RecordValue> {
   const config: RecordValue = {};
-  if (prepared.mcpServers) {
+  if (prepared.mcpServers || prepared.useNativeMcp === false) {
     const read = await connection.request("config/read", { cwd: workspace, includeLayers: false });
     if (
       !object(read) ||
@@ -230,10 +244,14 @@ export async function configureNativeCodexResources(
     )
       throw new Error("Codex returned invalid MCP discovery configuration.");
     const native = object(read.config.mcp_servers) ? read.config.mcp_servers : {};
+    const sourceNames = new Set(prepared.mcpSourceNames ?? Object.keys(prepared.mcpServers ?? {}));
+    // 原生配置保留官方 enabled/OAuth 等事实；只屏蔽来源同名项或显式关闭的原生 MCP。
     const servers: Record<string, RecordValue> = Object.fromEntries(
-      Object.keys(native).map((name) => [name, { enabled: false }]),
+      Object.keys(native)
+        .filter((name) => prepared.useNativeMcp === false || sourceNames.has(name))
+        .map((name) => [name, { enabled: false }]),
     );
-    for (const [name, server] of Object.entries(prepared.mcpServers)) {
+    for (const [name, server] of Object.entries(prepared.mcpServers ?? {})) {
       // 新命名空间避免深合并继承另一种 transport 的 command/url/env；同名源配置不互相污染。
       const key = `zcode_${createHash("sha256").update(name).digest("hex").slice(0, 24)}`;
       if (key in native)

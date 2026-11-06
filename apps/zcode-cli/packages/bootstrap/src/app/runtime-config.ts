@@ -1,7 +1,14 @@
 import type { ConfigResult } from "@zcode/adapters/config";
 import type { NativeCodexResourceSnapshot } from "@zcode/adapters/native-codex";
 import { GEN_UI_OUTPUT_ROOT_ENV } from "@zcode/shared/node";
-import { getCodexMcpCompatibility, getCodexSkillPathKey } from "@zcode/shared";
+import {
+  getCodexMcpCompatibility,
+  getCodexSkillPathKey,
+  createCodexSkillSelector,
+  getCodexPluginIncompatibleMcpServers,
+  type CodexSkillSyncCandidate,
+  type CodexPluginMcpDependency,
+} from "@zcode/shared";
 import { resolveInitialModelSelection, type ModelSelectionOptions } from "@zcode/provider";
 import {
   extractPluginReferences,
@@ -114,6 +121,8 @@ export async function resolveNativeCodexResourceSnapshot(input: {
     hostServers?: Record<string, McpServerConfig>,
   ) => Promise<Record<string, McpServerConfig>>;
   discoverSkillPaths: () => Promise<string[]>;
+  discoverSkillCandidates?: () => Promise<CodexSkillSyncCandidate[]>;
+  discoverPluginMcpDependencies?: () => CodexPluginMcpDependency[];
   allowsMcpServer: (name: string, config: McpServerConfig) => Promise<boolean>;
 }): Promise<NativeCodexResourceSnapshot> {
   const source = await input.resolvePreferences?.();
@@ -121,12 +130,17 @@ export async function resolveNativeCodexResourceSnapshot(input: {
   if (preferences.codexSkillRoots) preferences.codexSkillRoots = [...preferences.codexSkillRoots];
   if (preferences.codexSkillDisabledPaths)
     preferences.codexSkillDisabledPaths = [...preferences.codexSkillDisabledPaths];
+  if (preferences.codexSkillEnabledPaths)
+    preferences.codexSkillEnabledPaths = [...preferences.codexSkillEnabledPaths];
   if (preferences.codexMcpDisabledServers)
     preferences.codexMcpDisabledServers = [...preferences.codexMcpDisabledServers];
   const snapshot: NativeCodexResourceSnapshot = { preferences };
+  let configuredMcpServers: Record<string, McpServerConfig> | undefined;
   if (preferences.codexSyncMcp) {
     snapshot.mcpServers = {};
     const configured = await input.discoverMcpServers(source?.mcpServers);
+    configuredMcpServers = configured;
+    snapshot.mcpSourceNames = Object.keys(configured);
     for (const [name, config] of Object.entries(configured)) {
       // disabled 的同名用户配置先覆盖插件再过滤，不能删掉后让插件条目复活。
       if (
@@ -141,10 +155,37 @@ export async function resolveNativeCodexResourceSnapshot(input: {
   }
   if (preferences.codexSyncSkills) {
     // Host 技能目录与 CLI HOME 可能不同；已给出清单时不能并入另一目录而复活停用项。
-    const excluded = new Set(preferences.codexSkillDisabledPaths?.map(getCodexSkillPathKey));
+    let candidates = source?.skillCandidates ?? (await input.discoverSkillCandidates?.());
+    if (!source?.skillCandidates && candidates?.some((skill) => skill.pluginId)) {
+      const configured =
+        configuredMcpServers ?? (await input.discoverMcpServers(source?.mcpServers));
+      const dependencies = input.discoverPluginMcpDependencies?.() ?? [];
+      const mcpCandidates = Object.entries(configured).map(([name, config]) => ({
+        name,
+        enabled: config.enabled !== false,
+        ...getCodexMcpCompatibility(config, name),
+      }));
+      candidates = candidates.map((skill) => ({
+        ...skill,
+        incompatibleMcpServers: getCodexPluginIncompatibleMcpServers(
+          skill.pluginId,
+          dependencies,
+          mcpCandidates,
+        ),
+      }));
+    }
+    if (candidates) snapshot.skillCandidates = structuredClone(candidates);
+    const selectSkill = createCodexSkillSelector(preferences);
+    const byPath = new Map(candidates?.map((skill) => [getCodexSkillPathKey(skill.path), skill]));
     snapshot.skillPaths = [
-      ...new Set(source?.skillPaths ?? (await input.discoverSkillPaths())),
-    ].filter((path) => !excluded.has(getCodexSkillPathKey(path)));
+      ...new Set(
+        source?.skillPaths ??
+          candidates?.map((skill) => skill.path) ??
+          (await input.discoverSkillPaths()),
+      ),
+    ].filter((path) =>
+      selectSkill(byPath.get(getCodexSkillPathKey(path)) ?? { path, enabled: true }),
+    );
   }
   return snapshot;
 }

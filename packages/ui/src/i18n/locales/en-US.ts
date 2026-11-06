@@ -5177,7 +5177,10 @@ const enUS: Record<string, string> = {
     "Choose the MCP and skill sources for Codex. Each can follow ZCode or use Codex configuration independently.",
   "settings.codex.resources.mcpSync": "Sync MCP with ZCode",
   "settings.codex.resources.mcpSyncDescription":
-    "Choose external MCP servers for Codex. Compatible enabled servers start on; incompatible servers stay off. Codex-only MCP settings are ignored while syncing.",
+    "Choose external MCP servers for Codex. Compatible enabled servers start on; incompatible servers stay off.",
+  "settings.codex.resources.nativeMcp": "Keep native Codex MCP servers",
+  "settings.codex.resources.nativeMcpDescription":
+    "On by default. Use Codex-configured MCP servers alongside synced ZCode servers, retaining their enabled and sign-in state. Applies next turn.",
   "settings.codex.resources.mcpList": "MCP servers to sync",
   "settings.codex.resources.mcpListDescription":
     "Compatibility checks configuration, not connection success. These choices affect only Codex and do not change which ZCode MCP servers are enabled.",
@@ -5227,6 +5230,8 @@ const enUS: Record<string, string> = {
   "settings.codex.resources.skillScope.user": "User skill",
   "settings.codex.resources.skillScope.plugin": "Plugin skill",
   "settings.codex.resources.skillDisabled": "Disabled in ZCode; excluded from synchronization.",
+  "settings.codex.resources.skillMcpIncompatible":
+    "Companion MCP incompatible: {names}. This skill defaults off; you can enable it manually. Actions requiring that MCP may be unavailable.",
   "settings.codex.resources.skillsSyncDescription":
     "Use enabled ZCode skills and preserve disabled skills. Custom directories below are ignored while syncing.",
   "settings.codex.resources.skillRoots": "Additional Codex skill directories",
