@@ -67,9 +67,9 @@ ZCode-Codex 是集成 Codex 的 [ZCode](https://github.com/zai-org/ZCode) AI 编
 
 设置保存后从**下一轮对话**生效，作用于这台电脑执行的 Codex 会话，包括连接该电脑的网页／手机会话。派生后可点击输入区的**机器人按钮**查看后台子 Agent 列表，再进入只读子会话查看任务输入、运行中的命令／工具输出和回复。机器人按钮在子任务运行期间显示，全部结束后隐藏；派生记录仍可打开。工具实时输出显示有长度限制的预览，不展示模型私有推理。
 
-### 配置 Codex 的 MCP 与技能来源（Preview 4）
+### 配置 Codex 的 MCP 与技能来源（Preview 5）
 
-开发版新增（尚未替换公开安装包）：**保留 Codex 原生 MCP** 默认开启，可与 ZCode MCP 同时使用，沿用原有登录和启停状态；关闭后才屏蔽 Codex 自配 MCP。插件配套 MCP 不兼容时，该插件技能默认不同步，技能下方显示具体名称；可手动开启并保存。普通 ZCode 技能状态不受影响。原生浏览器需要独立的浏览器运行时支持，此开关只控制 MCP。
+Preview 5 新增：**保留 Codex 原生 MCP** 默认开启，可与 ZCode MCP 同时使用，沿用原有登录和启停状态；关闭后才屏蔽 Codex 自配 MCP。插件配套 MCP 不兼容时，该插件技能默认不同步，技能下方显示具体名称；可手动开启并保存。普通 ZCode 技能状态不受影响。原生浏览器需要独立的浏览器运行时支持，此开关只控制 MCP。
 
 打开 **设置 → Agent 能力 → Codex 集成**。MCP 和技能各有独立的“与 ZCode 同步”开关，默认关闭：
 
@@ -82,7 +82,7 @@ MCP 和技能列表默认分别收起，点击列表标题可展开／收起并�
 
 已有 Codex 会话的技能菜单只展示已选同步的可用技能。功能包的 MCP 不兼容、关闭或未同步时，功能包仍可选择和调用，描述开头会提示具体不可用的 MCP；依赖这些 MCP 的操作仍可能无法完成，选择功能包不会自动启用它们。停用的功能包隐藏，同名冲突仍禁选；普通 ZCode 会话保持原列表。提示由执行电脑返回，连接新版桌面的官网网页／手机会话也能显示，不需要另部署网页；保存后重新打开菜单即可刷新。尚未创建会话的新任务草稿缺少引擎身份，仍使用工作区列表；菜单不枚举 Codex 独立配置的资源。
 
-本节功能已随 **Preview 4（`v3.17.1-codex.4`）发布**；旧 `.3` 不含本节功能。官网网页不会新增控件，另行部署的新版 Web 使用同一 Host 设置。
+基础资源同步、逐项选择与折叠列表始于 Preview 4；原生 MCP 共存和配套 MCP 不兼容时技能默认不同步新增于 Preview 5。官网新增控件仍需另行部署新版 Web；旧版本下载保留在对应 Release 中。
 
 ### 官网网页／手机端的限制
 
@@ -102,38 +102,37 @@ MCP 和技能列表默认分别收起，点击列表标题可展开／收起并�
 
 ### 各系统安装包
 
-**Preview 4（`v3.17.1-codex.4`）已发布**：[Windows x64 完整 EXE](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.4/ZCode-Codex-3.17.1-preview.4-win-x64.exe) · [Windows SHA256 校验文件](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.4/SHA256SUMS-win-x64.txt) · [发行说明](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.4)
+**Preview 5（`v3.17.1-codex.5`）已发布**：[Windows x64 完整 EXE](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.5/ZCode-Codex-3.17.1-preview.5-win-x64.exe) · [Windows SHA256 校验文件](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.5/SHA256SUMS-win-x64.txt) · [发行说明](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.5)
 
-macOS Apple Silicon arm64：[DMG](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.4/ZCode.Preview-3.17.1-mac-arm64.dmg) · [ZIP](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.4/ZCode.Preview-3.17.1-mac-arm64.zip) · [SHA256](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.4/SHA256SUMS-mac-arm64.txt)
+macOS Apple Silicon arm64：[DMG](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.5/ZCode.Preview-3.17.1-mac-arm64.dmg) · [ZIP](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.5/ZCode.Preview-3.17.1-mac-arm64.zip) · [SHA256](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.5/SHA256SUMS-mac-arm64.txt)
 
-macOS Intel x64：[DMG](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.4/ZCode.Preview-3.17.1-mac-x64.dmg) · [ZIP](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.4/ZCode.Preview-3.17.1-mac-x64.zip) · [SHA256](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.4/SHA256SUMS-mac-x64.txt)
+macOS Intel x64：[DMG](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.5/ZCode.Preview-3.17.1-mac-x64.dmg) · [ZIP](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.5/ZCode.Preview-3.17.1-mac-x64.zip) · [SHA256](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.5/SHA256SUMS-mac-x64.txt)
 
-Linux x64：[AppImage](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.4/ZCode.Preview-3.17.1-linux-x86_64.AppImage) · [DEB](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.4/ZCode.Preview-3.17.1-linux-amd64.deb) · [RPM](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.4/ZCode.Preview-3.17.1-linux-x86_64.rpm) · [Arch Linux](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.4/ZCode.Preview-3.17.1-linux-x64.pkg.tar.zst) · [SHA256](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.4/SHA256SUMS-linux-x64.txt)
+Linux x64：[AppImage](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.5/ZCode.Preview-3.17.1-linux-x86_64.AppImage) · [DEB](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.5/ZCode.Preview-3.17.1-linux-amd64.deb) · [RPM](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.5/ZCode.Preview-3.17.1-linux-x86_64.rpm) · [Arch Linux](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.5/ZCode.Preview-3.17.1-linux-x64.pkg.tar.zst) · [SHA256](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.5/SHA256SUMS-linux-x64.txt)
 
-本次安装包来自同一源提交 `51592364927bae80336110458523a984820df2b7`。Windows 完整 EXE 为 198,651,284 字节，SHA256 为 `587624ee92dc5f5c12951460c88265902c2f04dc63f69645102060174ff03aee`，与 GitHub 附件摘要一致。
+三系统的 9 个安装／归档附件和 4 份校验清单均来自源提交 `f65c424c43a3575abb49a6390fd1239b8effca37`。Windows 完整 EXE 为 198,652,278 字节，SHA256 为 `46c9dd34377c840e6eb7e989a58ee79f1fc9c50e2db0a28e8343cb097ca56afc`。Preview 5 是本分支发行批次，应用基础版本继续沿用上游 `3.17.1`；包内构建标识为 `f65c424c`。
 
-历史下载：[Preview 3 Windows x64 完整 EXE](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.3/ZCode-Codex-3.17.1-preview.3-win-x64.exe) · [Preview 3 SHA256](https://github.com/e0gd/ZCode-Codex/releases/download/v3.17.1-codex.3/SHA256SUMS-win-x64.txt) · [Preview 3 发行说明](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.3) · [Preview 2 各平台包](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.2)
+历史下载：[Preview 4 全平台安装包](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.4) · [Preview 3 Windows EXE](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.3) · [Preview 2 各平台包](https://github.com/e0gd/ZCode-Codex/releases/tag/v3.17.1-codex.2)
 
-| 系统    | 源码打包架构                   | 产物格式                                    | 本分支验证状态                                                            |
-| ------- | ------------------------------ | ------------------------------------------- | ------------------------------------------------------------------------- |
-| Windows | x64、arm64                     | `.exe` 安装程序                             | x64 `.4` 已发布；干净机器安装待验收，arm64 未发布                         |
-| macOS   | Apple Silicon arm64、Intel x64 | `.dmg`、`.zip`                              | 两种架构的 `.4` 均已发布；真实桌面运行待验收                              |
-| Linux   | x64、arm64                     | `.AppImage`、`.deb`、`.rpm`、`.pkg.tar.zst` | x64 `.4` 四种格式已发布；arm64 未发布，真实桌面运行待验收                 |
+| 系统 | 源码支持架构 | 产物格式 | 本次发布状态 |
+| --- | --- | --- | --- |
+| Windows | x64、arm64 | `.exe` 安装程序 | x64 Preview 5 已发布；arm64 未发布 |
+| macOS | Apple Silicon arm64、Intel x64 | `.dmg`、`.zip` | 两种架构的 Preview 5 均已发布 |
+| Linux | x64、arm64 | `.AppImage`、`.deb`、`.rpm`、`.pkg.tar.zst` | x64 Preview 5 四种格式已发布；arm64 未发布 |
 
-公开安装包以本仓库 [Releases](https://github.com/e0gd/ZCode-Codex/releases) 实际附件为准；没有附件表示尚未发布，上游安装包不包含修改版功能。各系统的源码构建命令见下方“打包”。Codex 不随安装包内置。自行打包要与原版并排安装时，设置 `ZCODE_ENV=production`、`ZCODE_PREVIEW_IDENTITY=1`；标准用户／项目路径仍按上文读取，仓库改名不会自动迁移数据。
+公开安装包以本仓库 [Releases](https://github.com/e0gd/ZCode-Codex/releases) 实际附件为准。Codex CLI 需单独安装，由 ZCode 在发送 Codex 项目消息时按需启动。安装包继续读取原版用户／项目 MCP 与技能路径，不包含本机私人 Data 启动器或技能。自行打包并排安装时使用 `ZCODE_ENV=production`、`ZCODE_PREVIEW_IDENTITY=1`。
 
-**Windows x64 使用 `.exe` 完整安装程序**，安装后通过应用图标或 EXE 启动，无需 PowerShell。应用名为 **ZCode Preview**；预览包未签名，macOS 包未公证。已发布平台附带 SHA256 校验文件。更新后需退出并重新打开应用才能使用新代码；`.1`、`.2`、`.3` 下载和校验记录保留在历史 Release 中。
+**Windows 下载为完整 EXE 安装程序**，安装后直接通过图标或 EXE 启动。应用名为 **ZCode Preview**。更新后需完整退出客户端（包括托盘）再重新打开；各平台包附带 SHA256 校验文件。应用未签名，macOS 未公证。
 
-**Preview 4 更新内容**：增加按服务／技能选择的 Codex 同步和可折叠列表；MCP 不可用的功能包仍可选择，并提示具体缺失依赖；MCP 配置错误显示服务名称与原因；为 Codex 通知队列增加数量／内存限额，并仅在确认原进程及子进程均已退出后恢复遗留进程锁。同步默认关闭，标准安装继续读取原版路径。
+**Preview 5 更新**：原生 MCP 默认保留并可独立关闭；插件配套 MCP 不兼容时，其技能默认不同步并允许主动开启；提问答案在运行中通过官方 `turn/steer` 立即投递；会话回放增加 16 MiB／2000 条限制，并移除命令输入的重复输出。内存防护不能证明已排除所有 OOM 来源；原生 MCP 开关也不接通浏览器运行时。
 
-Windows 来自本机标准完整打包，依赖、原生模块和大小门禁通过；[本次云端构建](https://github.com/e0gd/ZCode-Codex/actions/runs/41965823678) 的 Windows 任务因 GNU tar 误读跨盘路径失败，不作为该 EXE 的构建证据。同源 macOS 两种架构和 Linux x64 已通过构建与校验发布，共提供 9 个安装附件和 4 份校验清单。已用包内 Electron／CLI 隔离验证原版用户目录发现、资源筛选与提示，以及原配置字节不变；未完成完整桌面 GUI、干净机安装、真实手机或真实订阅验收。详见[构建与验收记录](docs/testing/desktop-packages.md)。
+Windows 使用本机标准 `bundle:desktop` 完整入口构建，依赖、原生资源、大小、图标和默认值检查通过，包内 Electron／CLI 隔离验收通过。macOS 两种架构及 Linux x64 来自同源[云端构建](https://github.com/e0gd/ZCode-Codex/actions/runs/42228691881)，已核对发布提交与校验清单。该云端 Windows 任务因 GNU tar 跨盘路径处理失败，不作为本次 EXE 的构建证据。未完成干净机器安装、macOS／Linux 实机、真实订阅和物理手机公网验收。详见[构建与验收记录](docs/testing/desktop-packages.md)。
 
-**Preview 3 历史记录**：Windows `.3` 来自 `c462acd5`，包含会话自动总结标题、子 Agent 输入编码解码和 ChatGPT 浏览器登录修复；旧 `.2` 不含这三项。该 EXE 为 198,640,213 字节，SHA256 为 `cbd7d82c07a31a800b0cd49df788563ee94378e41db9fa3165107d9ee0edf949`。本机便携版快捷方式曾引用 32×32 低色深图标，已在本机改用高清图标；标准 Windows 安装包使用与原版相同的 16–256 像素、32 位色深资源，不经过该本机启动器。这项快捷方式调整不属于源码或 Release 更新。
-
-也可在 [Actions → Desktop packages](https://github.com/e0gd/ZCode-Codex/actions/workflows/desktop-packages.yml) 手动构建 Windows x64、macOS arm64/x64 和 Linux x64，成功的任务提供安装包与 SHA256 校验文件。当前是构建入口，实际可下载状态以任务结果为准；[构建与下载说明](docs/testing/desktop-packages.md) 包含限制和操作步骤。
+也可通过 [Actions → Desktop packages](https://github.com/e0gd/ZCode-Codex/actions/workflows/desktop-packages.yml) 手动构建支持的四个目标；实际下载以成功产物为准。
 
 ## 更新
 
+- **2026-11-06 Preview 5**：已发布 Windows x64 完整 EXE、macOS arm64／x64 和 Linux x64 新版安装包。新增原生 MCP 共存、插件技能兼容性默认关闭与手动开启，修复运行中提问答案的实时投递，并限制回放内存与命令输出重复存储。原版资源路径继续沿用；原生 MCP 默认保留，同步与自动派生默认关闭。
 - **2026-11-05 Preview 4**：已发布 `v3.17.1-codex.4` 的 Windows x64 完整 EXE、macOS arm64／x64 DMG／ZIP 和 Linux x64 四种格式。包含 Codex MCP／技能选择同步、独立折叠列表、功能包缺失 MCP 提示、带服务名称的配置错误、通知队列内存限额与可验证的遗留进程锁恢复。标准安装保留系统用户／原版 MCP 和技能路径，Codex 受管目录独立，同步默认关闭。
 - **2026-11-04 Preview 3**：Windows x64 完整 EXE 已重建发布，包含 Codex 首轮完成后自动总结会话标题（`c40d750a`）、子 Agent 输入／标签／派生卡片的 `c2a-msg-v1:` 解码（`12d30272`）、桌面官方浏览器登录及设备授权失败提示（`01a569d0`）。发布时 macOS／Linux 新版构建尚在排队；官方地区限制及真实订阅验收边界仍适用。
 - **2026-11-04**：新增管理模型中的 ChatGPT 订阅登录和只读官方模型目录；修复官方 Codex 0.166 子 Agent 派生记录、机器人按钮及后台子会话显示；子任务输入和命令／工具输出可在运行中查看，无需等到任务结束。更新多系统下载与发布校验流程。
